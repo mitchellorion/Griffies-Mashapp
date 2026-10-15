@@ -1,10 +1,10 @@
-# Gridified Sniffies
+# Griffies Mashapp
 
-A grid for Sniffies. Nearby people, chats, places, and community, in one local app, for your own account.
+Sniffies and Grindr in one grid, so you do not have to go back and forth.
 
-This is the first public version. More features are coming. The app stays Sniffies-only here. A separate project, [Gridified](https://github.com/mitchellorion/gridified), will add Grindr beside Sniffies. That line is its own repository, not a fork of this one, so this release can stay a Sniffies app.
+This version is Gridified Sniffies. Nearby people, chats, places, and community, in one local app, for your own Sniffies account. Grindr is the next build. More features are coming.
 
-Gridified Sniffies is an unofficial client. It is not affiliated with Sniffies.
+Griffies is an unofficial client. It is not affiliated with Sniffies or Grindr.
 
 ## What you can do now
 
@@ -31,6 +31,8 @@ The server listens on `127.0.0.1` only. Your session is stored under `~/.config/
 
 Set `SNIFFIES_PORT` if you need a port other than `8765`.
 
+The desktop shortcut named Sniffies does the same thing: it starts the server if port 8765 is closed, then opens the page.
+
 ## What is coming
 
-More on the Sniffies side in this repo. Grindr, in the same grid as Sniffies, will land in [Gridified](https://github.com/mitchellorion/gridified) rather than here.
+Grindr in this same grid. Until that lands, this release is the Sniffies app.
