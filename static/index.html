@@ -1,0 +1,1942 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nearby</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0b0b;
+    --card: #171717;
+    --line: #2a2a2a;
+    --text: #f5f5f5;
+    --muted: #9a9a9a;
+    --yellow: #ffd200;
+    --ink: #14120a;
+    --danger: #ff6b6b;
+    --online: #3dde6a;
+    --sniffies: #3ec6ff;
+    --grindr: #ff7a00;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 15px/1.35 ui-sans-serif, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  button, input, textarea, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  .login {
+    min-height: 100%;
+    display: grid;
+    place-items: center;
+    padding: 24px 16px;
+  }
+  .login form {
+    width: min(380px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .login h1 { margin: 0 0 4px; font-size: 32px; letter-spacing: -0.03em; }
+  .login p { margin: 0 0 8px; color: var(--muted); }
+  label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 13px; }
+  input, textarea, select {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+    color: var(--text);
+  }
+  input:focus, textarea:focus, select:focus { outline: 2px solid var(--yellow); border-color: transparent; }
+  .primary {
+    background: var(--yellow);
+    color: var(--ink);
+    border: 0;
+    border-radius: 12px;
+    padding: 13px 16px;
+    font-weight: 800;
+  }
+  .primary:disabled { opacity: 0.5; cursor: default; }
+  .error { color: var(--danger); min-height: 1.2em; margin: 0; font-size: 14px; }
+  .app { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+  .workspace {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: row;
+  }
+  .main {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  body.profile-open .app,
+  body.profile-open .thread {
+    margin-right: min(440px, 42vw);
+  }
+  body.profile-open nav.tabs {
+    right: min(440px, 42vw);
+  }
+  header.bar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px 10px;
+    background: rgba(11, 11, 11, 0.92);
+    backdrop-filter: blur(8px);
+  }
+  header.bar h1 { margin: 0; font-size: 22px; letter-spacing: -0.03em; }
+  .bar-actions { display: flex; gap: 8px; }
+  .ghost {
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    padding: 6px 4px;
+    font-weight: 650;
+  }
+  .ghost.on, .tab.on { color: var(--yellow); }
+  .account-select {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 6px 8px;
+    max-width: 170px;
+  }
+  .community-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    width: 100%;
+  }
+  .community-row.mine { flex-direction: row-reverse; }
+  .community-row .bubble { max-width: min(72%, 480px); }
+  .face-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    overflow: hidden;
+    background: #242424;
+    flex: none;
+  }
+  .face-btn img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .alerts {
+    border-bottom: 1px solid var(--line);
+    padding: 0 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .alerts .check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+  .alerts .row { display: flex; gap: 8px; }
+  .alerts .hint { color: var(--muted); font-size: 12px; margin: 0; }
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding: 0 12px 8px;
+  }
+  .filters .chip {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 10px;
+    color: var(--text);
+    font-size: 13px;
+  }
+  .filters select {
+    padding: 6px 10px;
+    border-radius: 999px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 12px;
+    padding: 12px 12px 76px;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    align-content: start;
+  }
+  .card-wrap {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+    aspect-ratio: 3 / 4;
+  }
+  .card {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 14px;
+    background: #1c1c1c;
+    overflow: hidden;
+    text-align: left;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+  .card img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .card .glow {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+  }
+  .card.sniffies .glow { box-shadow: inset 0 0 8px 2px rgba(62, 198, 255, 0.82); }
+  .card.grindr .glow { box-shadow: inset 0 0 8px 2px rgba(255, 122, 0, 0.85); }
+  .card .shade {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 46%;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.78));
+    pointer-events: none;
+  }
+  .card .meta {
+    position: absolute;
+    left: 8px; right: 8px; bottom: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  }
+  .card .who { font-weight: 800; font-size: 15px; }
+  .card .sub {
+    color: #eee;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .dot {
+    position: absolute;
+    top: 8px; right: 8px;
+    width: 11px; height: 11px;
+    border-radius: 50%;
+    background: var(--online);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+  }
+  .badge {
+    position: absolute;
+    top: 8px; left: 8px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--yellow);
+    color: var(--ink);
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 18px;
+    text-align: center;
+  }
+  .empty {
+    grid-column: 1 / -1;
+    color: var(--muted);
+    text-align: center;
+    padding: 48px 16px;
+  }
+  .more {
+    grid-column: 1 / -1;
+    margin: 8px;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px;
+  }
+  .chat-list {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 0 0 76px;
+  }
+  .chat-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+  }
+  .avatar-wrap { position: relative; flex: none; }
+  .avatar {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: #242424;
+    display: block;
+  }
+  .avatar.blank { background: #242424; }
+  .avatar-wrap .dot { top: 2px; right: 2px; width: 10px; height: 10px; }
+  .chat-main { flex: 1; min-width: 0; }
+  .chat-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .chat-top .who { font-weight: 800; }
+  .chat-top .time { color: var(--muted); font-size: 12px; flex: none; }
+  .chat-preview {
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .chat-row.unread .chat-preview { color: var(--text); font-weight: 700; }
+  .count {
+    flex: none;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--yellow);
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 20px;
+    text-align: center;
+  }
+  .community {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 58px;
+  }
+  .community .messages { flex: 1; }
+  .community .hint { color: var(--muted); font-size: 12px; margin: 0; padding: 0 14px 8px; }
+  .photo-btn {
+    align-self: center;
+    background: transparent;
+    border: 0;
+    color: var(--yellow);
+    font-weight: 800;
+    padding: 8px 4px;
+  }
+  .attached { color: var(--yellow); font-size: 12px; margin: 0; padding: 0 14px; }
+  nav.tabs {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    height: 58px;
+    display: flex;
+    background: #101010;
+    border-top: 1px solid var(--line);
+    z-index: 3;
+  }
+  .tab {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    font-weight: 800;
+    letter-spacing: 0.02em;
+  }
+  .thread {
+    position: fixed;
+    inset: 0;
+    z-index: 4;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+  }
+  .thread header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .thread h1 { margin: 0; font-size: 18px; flex: 1; }
+  .messages {
+    flex: 1;
+    overflow: auto;
+    padding: 14px 14px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .bubble {
+    max-width: min(78%, 520px);
+    padding: 8px 12px;
+    border-radius: 16px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .bubble.mine { align-self: flex-end; background: #3a320c; }
+  .bubble.theirs { align-self: flex-start; background: #222; }
+  .bubble img { max-width: 240px; border-radius: 10px; display: block; }
+  .bubble time { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+  .bubble .sub { font-size: 11px; font-weight: 800; color: var(--yellow); margin-bottom: 2px; }
+  .bubble .receipt { display: block; margin-top: 2px; font-size: 11px; font-weight: 700; color: var(--yellow); text-align: right; }
+  .thread-face {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    overflow: hidden;
+    background: #242424;
+    flex: none;
+  }
+  .thread-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 6;
+    background: rgba(0, 0, 0, 0.55);
+    display: grid;
+    align-items: end;
+  }
+  .drawer article {
+    background: #141414;
+    border-radius: 18px 18px 0 0;
+    padding: 12px 16px 24px;
+    max-height: 72vh;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .drawer header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .drawer h2 { margin: 0; font-size: 18px; }
+  .photo-tray {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    overflow: auto;
+  }
+  .photo-tray button {
+    aspect-ratio: 1;
+    padding: 0;
+    border: 0;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #1c1c1c;
+  }
+  .photo-tray img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  form.composer {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid var(--line);
+  }
+  textarea { flex: 1; resize: none; min-height: 44px; max-height: 140px; }
+  .profile-pane {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 8;
+    width: min(440px, 42vw);
+    background: #101010;
+    border-left: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .profile-pane header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    flex: none;
+  }
+  .profile-pane header h2 { margin: 0; font-size: 18px; flex: 1; }
+  .profile-pane header p { margin: 0; color: var(--muted); font-size: 13px; }
+  .profile-photos {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+  .profile-photos img {
+    display: block;
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+    background: #0a0a0a;
+  }
+  .profile-blurb {
+    margin: 0;
+    padding: 12px 14px 18px;
+    color: var(--muted);
+    white-space: pre-wrap;
+  }
+  .profile-pane .actions {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px 16px;
+    flex: none;
+  }
+  .place-list {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 0 0 76px;
+  }
+  .place-row .who { font-weight: 800; }
+  .place-people {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 10px 12px;
+  }
+  .place-meta {
+    padding: 0 14px 8px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .place-meta p { margin: 0 0 6px; }
+  .place-pane .messages { flex: 1; min-height: 0; }
+</style>
+</head>
+<body>
+<section class="login" id="loginView">
+  <form id="loginForm">
+    <h1 id="loginTitle">Sign in</h1>
+    <p id="loginCopy">Use the email and password for your Sniffies account.</p>
+    <label>Email <input id="email" type="email" autocomplete="username" required></label>
+    <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+    <p class="error" id="loginError"></p>
+    <button class="primary" id="loginBtn" type="submit">Continue</button>
+    <button class="ghost" id="loginCancel" type="button" hidden>Cancel</button>
+  </form>
+</section>
+
+<div class="app" id="appView" hidden>
+  <header class="bar">
+    <h1 id="viewTitle">Nearby</h1>
+    <div class="bar-actions">
+      <select class="account-select" id="accountSelect" hidden></select>
+      <button class="ghost" id="refreshBtn" type="button">Refresh</button>
+      <button class="ghost" id="notifyBtn" type="button">Notify</button>
+      <button class="ghost" id="logoutBtn" type="button">Log out</button>
+    </div>
+  </header>
+  <form class="alerts" id="notifyPanel" hidden>
+    <label class="check"><input id="notifyOn" type="checkbox"> Notify me on the desktop</label>
+    <p class="hint">Enter words or phrases, separated by commas. A desktop notification fires when one of them appears in a private chat or community post.</p>
+    <label>Keywords <input id="notifyWords" autocomplete="off" placeholder="hey, looking, now"></label>
+    <div class="row">
+      <button class="primary" type="submit">Save</button>
+      <button class="ghost" id="notifyTest" type="button">Test</button>
+    </div>
+    <p class="hint" id="notifyMsg"></p>
+  </form>
+  <div class="workspace">
+  <div class="main">
+  <div class="filters" id="filters">
+    <label class="chip"><input id="filterPhoto" type="checkbox" checked> Photo</label>
+    <label class="chip"><input id="filterOnline" type="checkbox"> Online</label>
+    <select id="filterAge" aria-label="Age">
+      <option value="">Any age</option>
+      <option value="18-25">18–25</option>
+      <option value="26-35">26–35</option>
+      <option value="36-45">36–45</option>
+      <option value="46-120">46+</option>
+    </select>
+    <select id="filterDistance" aria-label="Distance">
+      <option value="">Any distance</option>
+      <option value="1">1 mi</option>
+      <option value="5">5 mi</option>
+      <option value="10">10 mi</option>
+      <option value="20">20 mi</option>
+    </select>
+  </div>
+  <div class="grid" id="grid"></div>
+  <div class="chat-list" id="chats" hidden></div>
+  <div class="place-list" id="places" hidden></div>
+  <section class="community" id="community" hidden>
+    <p class="hint">This is the public nearby chat. A new post drops your oldest one when Sniffies’s limit is full.</p>
+    <div class="messages" id="communityMessages"></div>
+    <p class="error" id="communityError"></p>
+    <p class="attached" id="communityAttached" hidden>Photo attached</p>
+    <form class="composer" id="communityComposer">
+      <input id="communityPhoto" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+      <button class="photo-btn" id="communityPhotoBtn" type="button">Photo</button>
+      <textarea id="communityBox" rows="1" placeholder="Community"></textarea>
+      <button class="primary" id="communitySend" type="submit">Send</button>
+    </form>
+  </section>
+  </div>
+  </div>
+  <nav class="tabs">
+    <button class="tab on" id="tabGrid" type="button">Grid</button>
+    <button class="tab" id="tabPlaces" type="button">Places</button>
+    <button class="tab" id="tabChats" type="button">Chats</button>
+    <button class="tab" id="tabCommunity" type="button">Community</button>
+  </nav>
+</div>
+
+<section class="thread" id="thread" hidden>
+  <header>
+    <button class="ghost" id="back" type="button">Back</button>
+    <button class="thread-face" id="threadFace" type="button" hidden>
+      <img id="threadFaceImg" alt="">
+    </button>
+    <h1 id="threadTitle">Chat</h1>
+  </header>
+  <div class="messages" id="messages"></div>
+  <p class="error" id="threadError"></p>
+  <p class="attached" id="threadAttached" hidden>Photo attached</p>
+  <form class="composer" id="composer">
+    <input id="threadPhoto" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+    <button class="photo-btn" id="threadPhotoBtn" type="button">Photo</button>
+    <textarea id="box" rows="1" placeholder="Message"></textarea>
+    <button class="primary" id="send" type="submit">Send</button>
+  </form>
+</section>
+
+<aside class="profile-pane place-pane" id="placePane" hidden>
+  <header>
+    <div>
+      <h2 id="placeTitle">Place</h2>
+      <p id="placeSub"></p>
+    </div>
+    <button class="ghost" id="placeClose" type="button">Close</button>
+  </header>
+  <div class="profile-photos" id="placePhotos"></div>
+  <div class="place-meta" id="placeMeta"></div>
+  <div class="place-people" id="placePeople"></div>
+  <div class="messages" id="placeMessages"></div>
+  <p class="error" id="placeError"></p>
+  <form class="composer" id="placeComposer">
+    <textarea id="placeBox" rows="1" placeholder="Place chat"></textarea>
+    <button class="primary" id="placeSend" type="submit">Send</button>
+  </form>
+</aside>
+<aside class="profile-pane" id="sheet" hidden>
+  <header>
+    <div>
+      <h2 id="sheetTitle">Profile</h2>
+      <p id="sheetMeta"></p>
+    </div>
+    <button class="ghost" id="sheetClose" type="button">Close</button>
+  </header>
+  <div class="profile-photos" id="sheetPhotos"></div>
+  <p class="profile-blurb" id="sheetNote"></p>
+  <div class="actions">
+    <button class="primary" id="sheetMessage" type="button" hidden>Message</button>
+  </div>
+</aside>
+
+<div class="drawer" id="photoDrawer" hidden>
+  <article>
+    <header>
+      <h2>Photos</h2>
+      <button class="ghost" id="photoDrawerClose" type="button">Close</button>
+    </header>
+    <div class="photo-tray" id="photoTray"></div>
+    <p class="error" id="photoDrawerError"></p>
+    <button class="primary" id="photoDrawerNew" type="button">New photo</button>
+  </article>
+</div>
+
+<script>
+const loginView = document.getElementById("loginView");
+const appView = document.getElementById("appView");
+const loginError = document.getElementById("loginError");
+const loginBtn = document.getElementById("loginBtn");
+const loginCancel = document.getElementById("loginCancel");
+const gridEl = document.getElementById("grid");
+const chatsEl = document.getElementById("chats");
+const communityEl = document.getElementById("community");
+const placesEl = document.getElementById("places");
+const placePane = document.getElementById("placePane");
+const communityMessages = document.getElementById("communityMessages");
+const communityError = document.getElementById("communityError");
+const communityBox = document.getElementById("communityBox");
+const viewTitle = document.getElementById("viewTitle");
+const threadEl = document.getElementById("thread");
+const messagesEl = document.getElementById("messages");
+const threadTitle = document.getElementById("threadTitle");
+const threadError = document.getElementById("threadError");
+const box = document.getElementById("box");
+const sheet = document.getElementById("sheet");
+const threadPhoto = document.getElementById("threadPhoto");
+const communityPhoto = document.getElementById("communityPhoto");
+const accountSelect = document.getElementById("accountSelect");
+const refreshBtn = document.getElementById("refreshBtn");
+const notifyBtn = document.getElementById("notifyBtn");
+const notifyPanel = document.getElementById("notifyPanel");
+const photoDrawer = document.getElementById("photoDrawer");
+const photoTray = document.getElementById("photoTray");
+const sheetMessage = document.getElementById("sheetMessage");
+const threadFace = document.getElementById("threadFace");
+const threadFaceImg = document.getElementById("threadFaceImg");
+
+let signedIn = false;
+let addingAccount = false;
+let tab = "grid";
+let units = "imperial";
+let cards = [];
+let conversations = [];
+let communityItems = [];
+let places = [];
+let activePlace = null;
+let active = null;
+let knownIds = new Set();
+let knownCommunity = new Set();
+let stickToBottom = true;
+let stickCommunity = true;
+let threadFile = null;
+let communityFile = null;
+let sending = false;
+let meId = "";
+let theirReadId = "";
+let sheetProfile = null;
+let photoScope = "thread";
+let savedPhotos = [];
+
+function when(iso) {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const min = Math.round((Date.now() - then) / 60000);
+  if (min < 1) return "now";
+  if (min < 60) return min + "m";
+  const hr = Math.round(min / 60);
+  if (hr < 24) return hr + "h";
+  const day = Math.round(hr / 24);
+  if (day < 7) return day + "d";
+  return new Date(iso).toLocaleDateString();
+}
+
+function clock(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function distanceLabel(miles) {
+  if (miles == null || miles === "") return "";
+  const n = Number(miles);
+  if (!Number.isFinite(n)) return "";
+  if (units === "metric") {
+    const km = n * 1.60934;
+    return (km < 10 ? km.toFixed(1) : String(Math.round(km))) + " km";
+  }
+  return (n < 10 ? n.toFixed(1) : String(Math.round(n))) + " mi";
+}
+
+function photoUrl(userId, file) {
+  if (!userId || !file) return "";
+  return "/media/profile/" + userId + "/" + encodeURIComponent(file);
+}
+
+function placePhotoUrl(file) {
+  if (!file) return "";
+  return "/media/place/" + String(file).split("/").map(encodeURIComponent).join("/");
+}
+
+function chatPhotoUrl(userId, file) {
+  if (!userId || !file) return "";
+  return "/media/chat/" + userId + "/" + encodeURIComponent(file);
+}
+
+function resetLists() {
+  cards = [];
+  conversations = [];
+  communityItems = [];
+  places = [];
+  activePlace = null;
+  active = null;
+  knownIds = new Set();
+  knownCommunity = new Set();
+  theirReadId = "";
+  meId = "";
+}
+
+function showLogin(message, add) {
+  addingAccount = !!add;
+  loginView.hidden = false;
+  appView.hidden = !add;
+  threadEl.hidden = true;
+  closeProfile();
+  photoDrawer.hidden = true;
+  loginError.textContent = message || "";
+  loginBtn.disabled = false;
+  document.getElementById("loginTitle").textContent = add ? "Add account" : "Sign in";
+  document.getElementById("loginCopy").textContent = add
+    ? "Sign in with a second Sniffies email. You can switch accounts from the menu."
+    : "Use the email and password for your Sniffies account.";
+  loginCancel.hidden = !add;
+  if (!add) signedIn = false;
+}
+
+function showApp() {
+  signedIn = true;
+  addingAccount = false;
+  loginView.hidden = true;
+  appView.hidden = false;
+  loginError.textContent = "";
+  loginCancel.hidden = true;
+}
+
+async function requireOk(res) {
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    showLogin(data.error || "Log in.");
+    throw new Error("login");
+  }
+  return data;
+}
+
+function paintAccounts(data) {
+  const accounts = data.accounts || [];
+  accountSelect.replaceChildren();
+  accountSelect.hidden = accounts.length === 0;
+  for (const acc of accounts) {
+    const option = document.createElement("option");
+    option.value = String(acc.index);
+    option.textContent = acc.label || "Account";
+    if (acc.active) option.selected = true;
+    accountSelect.append(option);
+  }
+  if (data.canAdd) {
+    const add = document.createElement("option");
+    add.value = "add";
+    add.textContent = "Add account";
+    accountSelect.append(add);
+  }
+}
+
+async function loadApp() {
+  showApp();
+  await refreshGrid(true);
+  await Promise.all([refreshInbox(), refreshCommunity(), refreshPlaces(false), loadNotify()]);
+}
+
+document.getElementById("loginForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  loginBtn.disabled = true;
+  loginError.textContent = "";
+  const res = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: document.getElementById("email").value,
+      password: document.getElementById("password").value,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  document.getElementById("password").value = "";
+  if (!res.ok) {
+    loginBtn.disabled = false;
+    loginError.textContent = data.error || "Could not sign in.";
+    return;
+  }
+  loginBtn.disabled = false;
+  paintAccounts(data);
+  resetLists();
+  await loadApp();
+});
+
+loginCancel.addEventListener("click", () => {
+  addingAccount = false;
+  showApp();
+});
+
+document.getElementById("logoutBtn").addEventListener("click", async () => {
+  const res = await fetch("/api/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const data = await res.json().catch(() => ({}));
+  document.getElementById("email").value = "";
+  if (data.loggedIn) {
+    paintAccounts(data);
+    resetLists();
+    threadEl.hidden = true;
+    await loadApp();
+    return;
+  }
+  accountSelect.hidden = true;
+  showLogin("");
+});
+
+accountSelect.addEventListener("change", async () => {
+  const value = accountSelect.value;
+  if (value === "add") {
+    showLogin("", true);
+    return;
+  }
+  const index = Number(value);
+  if (!Number.isInteger(index)) return;
+  const res = await fetch("/api/account/switch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ index }),
+  });
+  const data = await requireOk(res);
+  paintAccounts(data);
+  resetLists();
+  threadEl.hidden = true;
+  await loadApp();
+});
+
+function setTab(next) {
+  tab = next;
+  document.getElementById("tabGrid").classList.toggle("on", tab === "grid");
+  document.getElementById("tabPlaces").classList.toggle("on", tab === "places");
+  document.getElementById("tabChats").classList.toggle("on", tab === "chats");
+  document.getElementById("tabCommunity").classList.toggle("on", tab === "community");
+  viewTitle.textContent = tab === "grid" ? "Nearby" : tab === "places" ? "Places" : tab === "chats" ? "Chats" : "Community";
+  gridEl.hidden = tab !== "grid";
+  placesEl.hidden = tab !== "places";
+  chatsEl.hidden = tab !== "chats";
+  communityEl.hidden = tab !== "community";
+  document.getElementById("filters").hidden = tab !== "grid";
+  refreshBtn.hidden = tab !== "grid" && tab !== "places";
+  threadEl.hidden = true;
+  closeProfile();
+  closePlace();
+  photoDrawer.hidden = true;
+  active = null;
+  if (tab === "community") renderCommunity();
+  else if (tab === "places") renderPlaces();
+  else render();
+}
+
+document.getElementById("tabGrid").addEventListener("click", () => setTab("grid"));
+document.getElementById("tabPlaces").addEventListener("click", () => { setTab("places"); refreshPlaces(false).catch(() => {}); });
+document.getElementById("tabChats").addEventListener("click", () => { setTab("chats"); refreshInbox().catch(() => {}); });
+document.getElementById("tabCommunity").addEventListener("click", () => { setTab("community"); refreshCommunity().catch(() => {}); });
+
+refreshBtn.addEventListener("click", async () => {
+  refreshBtn.disabled = true;
+  try {
+    if (tab === "places") await refreshPlaces(true);
+    else await refreshGrid(true);
+  } finally { refreshBtn.disabled = false; }
+});
+
+function makeCard(opts) {
+  const wrap = document.createElement("div");
+  wrap.className = "card-wrap";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "card " + (opts.source === "grindr" ? "grindr" : "sniffies");
+  if (opts.photo) {
+    const img = document.createElement("img");
+    img.alt = "";
+    img.loading = "lazy";
+    img.src = photoUrl(opts.userId, opts.photo);
+    btn.append(img);
+  }
+  const glow = document.createElement("div");
+  glow.className = "glow";
+  btn.append(glow);
+  const shade = document.createElement("div");
+  shade.className = "shade";
+  btn.append(shade);
+  if (opts.online) {
+    const dot = document.createElement("div");
+    dot.className = "dot";
+    btn.append(dot);
+  }
+  if (opts.unread > 0) {
+    const badge = document.createElement("div");
+    badge.className = "badge";
+    badge.textContent = opts.unread > 99 ? "99+" : String(opts.unread);
+    btn.append(badge);
+  }
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const who = document.createElement("div");
+  who.className = "who";
+  who.textContent = opts.title;
+  meta.append(who);
+  if (opts.sub) {
+    const sub = document.createElement("div");
+    sub.className = "sub";
+    sub.textContent = opts.sub;
+    meta.append(sub);
+  }
+  btn.append(meta);
+  btn.addEventListener("click", opts.onClick);
+  wrap.append(btn);
+  return wrap;
+}
+
+function visibleCards() {
+  const photoOnly = document.getElementById("filterPhoto").checked;
+  const onlineOnly = document.getElementById("filterOnline").checked;
+  const ageSel = document.getElementById("filterAge").value;
+  const maxDist = Number(document.getElementById("filterDistance").value);
+  let minAge = 0, maxAge = 200;
+  if (ageSel.includes("-")) {
+    const parts = ageSel.split("-");
+    minAge = Number(parts[0]);
+    maxAge = Number(parts[1]);
+  }
+  return cards.filter((card) => {
+    if (photoOnly && !card.photo) return false;
+    if (onlineOnly && !card.online) return false;
+    if (ageSel && (card.age == null || card.age < minAge || card.age > maxAge)) return false;
+    if (maxDist && (card.distance == null || card.distance > maxDist)) return false;
+    return true;
+  });
+}
+
+function renderGrid() {
+  gridEl.replaceChildren();
+  const shown = visibleCards();
+  if (!shown.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = cards.length ? "No profiles match those filters." : "Nobody nearby yet.";
+    gridEl.append(empty);
+    return;
+  }
+  for (const card of shown) {
+    const bits = [];
+    if (card.age) bits.push(String(card.age));
+    const away = distanceLabel(card.distance);
+    if (away) bits.push(away);
+    gridEl.append(makeCard({
+      userId: card.id,
+      photo: card.photo,
+      online: card.online,
+      unread: card.unread || 0,
+      source: card.source || "sniffies",
+      title: bits.join(" · ") || "Nearby",
+      sub: "",
+      onClick: () => openCard(card),
+    }));
+  }
+}
+
+["filterPhoto", "filterOnline", "filterAge", "filterDistance"].forEach((id) => {
+  document.getElementById(id).addEventListener("change", () => {
+    if (tab === "grid") renderGrid();
+  });
+});
+
+function faceButton(userId, photo, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "face-btn";
+  if (photo) {
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = photoUrl(userId, photo);
+    btn.append(img);
+  }
+  btn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onClick();
+  });
+  return btn;
+}
+
+function renderChats() {
+  chatsEl.replaceChildren();
+  if (!conversations.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No conversations yet.";
+    chatsEl.append(empty);
+    return;
+  }
+  for (const convo of conversations) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "chat-row" + (convo.unread > 0 ? " unread" : "");
+    const wrap = document.createElement("div");
+    wrap.className = "avatar-wrap";
+    wrap.append(faceButton(convo.userId, convo.photo, () => openProfile(convo.userId)));
+    if (convo.online) {
+      const dot = document.createElement("div");
+      dot.className = "dot";
+      wrap.append(dot);
+    }
+    row.append(wrap);
+    const main = document.createElement("div");
+    main.className = "chat-main";
+    const top = document.createElement("div");
+    top.className = "chat-top";
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = convo.age ? String(convo.age) : "Chat";
+    const time = document.createElement("div");
+    time.className = "time";
+    time.textContent = when(convo.lastAt);
+    top.append(who, time);
+    const preview = document.createElement("div");
+    preview.className = "chat-preview";
+    const prefix = convo.mine ? "You: " : "";
+    preview.textContent = prefix + (convo.preview || "No messages yet");
+    main.append(top, preview);
+    row.append(main);
+    if (convo.unread > 0) {
+      const count = document.createElement("div");
+      count.className = "count";
+      count.textContent = convo.unread > 99 ? "99+" : String(convo.unread);
+      row.append(count);
+    }
+    row.addEventListener("click", () => openConvo(convo));
+    chatsEl.append(row);
+  }
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "more";
+  more.textContent = "Load older conversations";
+  more.addEventListener("click", loadOlder);
+  chatsEl.append(more);
+}
+
+function render() {
+  if (tab === "grid") renderGrid();
+  else if (tab === "chats") renderChats();
+}
+
+async function refreshGrid(fresh) {
+  const res = await fetch("/api/grid" + (fresh ? "?fresh=1" : ""));
+  const data = await requireOk(res);
+  if (!res.ok) return;
+  units = data.units || units;
+  cards = data.cards || [];
+  if (tab === "grid" && threadEl.hidden) render();
+}
+
+async function refreshInbox() {
+  const res = await fetch("/api/inbox");
+  const data = await requireOk(res);
+  if (!res.ok) return;
+  if (data.me) meId = data.me;
+  const incoming = data.conversations || [];
+  const ids = new Set(incoming.map((c) => c.conversationId));
+  const older = conversations.filter((c) => !ids.has(c.conversationId));
+  conversations = incoming.concat(older);
+  if (active) {
+    const updated = conversations.find((c) => c.conversationId === active.conversationId);
+    if (updated) {
+      active = updated;
+      if (updated.theirReadId) theirReadId = updated.theirReadId;
+    }
+  }
+  if (tab === "chats" && threadEl.hidden) render();
+}
+
+async function refreshCommunity() {
+  const res = await fetch("/api/community");
+  const data = await requireOk(res);
+  if (!res.ok) return;
+  const items = data.messages || [];
+  const grew = items.length !== knownCommunity.size || items.some((msg) => msg.id && !knownCommunity.has(msg.id));
+  communityItems = items;
+  if (tab === "community" && (grew || !knownCommunity.size)) renderCommunity();
+}
+
+async function loadOlder() {
+  const oldest = conversations[conversations.length - 1];
+  if (!oldest || !oldest.lastAt) return;
+  const res = await fetch("/api/inbox/more", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ earliest: oldest.lastAt }),
+  });
+  const data = await requireOk(res);
+  if (!res.ok) return;
+  const ids = new Set(conversations.map((c) => c.conversationId));
+  for (const convo of data.conversations || []) {
+    if (!ids.has(convo.conversationId)) conversations.push(convo);
+  }
+  render();
+}
+
+function openCard(card) {
+  openProfile(card.id, card);
+}
+
+function previewMessage(convo) {
+  return {
+    id: "preview-" + convo.conversationId,
+    body: convo.preview === "Photo" ? null : convo.preview,
+    file: null,
+    author: convo.userId,
+    mine: !!convo.mine,
+    createdAt: convo.lastAt,
+    spam: false,
+  };
+}
+
+function seenIdFor(items, readId) {
+  if (!readId) return null;
+  let found = null;
+  for (const msg of items) {
+    if (msg.mine && msg.id && String(msg.id) <= String(readId)) found = msg.id;
+  }
+  return found;
+}
+
+function renderCommunity() {
+  const nearBottom = communityMessages.scrollHeight - communityMessages.scrollTop - communityMessages.clientHeight < 80;
+  communityMessages.replaceChildren();
+  knownCommunity = new Set();
+  if (!communityItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No community posts yet.";
+    communityMessages.append(empty);
+    return;
+  }
+  for (const msg of communityItems) {
+    knownCommunity.add(msg.id);
+    communityMessages.append(bubbleFor(msg, true));
+  }
+  if (stickCommunity || nearBottom) communityMessages.scrollTop = communityMessages.scrollHeight;
+}
+
+function bubbleFor(msg, community) {
+  const bubble = document.createElement("div");
+  bubble.className = "bubble " + (msg.mine ? "mine" : "theirs");
+  bubble.dataset.id = msg.id || "";
+  if (community) {
+    const who = document.createElement("div");
+    who.className = "sub";
+    who.textContent = msg.deleted ? (msg.mine ? "You removed a post" : "Removed") : (msg.age ? String(msg.age) : (msg.mine ? "You" : "Nearby"));
+    bubble.append(who);
+  }
+  if (msg.file && msg.author && !msg.deleted) {
+    const img = document.createElement("img");
+    img.alt = "Photo";
+    img.src = chatPhotoUrl(msg.author, msg.file);
+    bubble.append(img);
+  }
+  if (msg.body && !msg.deleted) bubble.append(document.createTextNode(msg.body));
+  const time = document.createElement("time");
+  time.textContent = clock(msg.createdAt);
+  bubble.append(time);
+  if (!community && msg.mine && msg.id && msg.id === seenIdFor(window.__threadItems || [], theirReadId)) {
+    const receipt = document.createElement("span");
+    receipt.className = "receipt";
+    receipt.textContent = "Seen";
+    bubble.append(receipt);
+  }
+  if (!community) return bubble;
+  const row = document.createElement("div");
+  row.className = "community-row " + (msg.mine ? "mine" : "theirs");
+  row.append(faceButton(msg.author, msg.photo, () => openProfile(msg.author)));
+  row.append(bubble);
+  return row;
+}
+
+function renderMessages(items) {
+  window.__threadItems = items;
+  const nearBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
+  messagesEl.replaceChildren();
+  knownIds = new Set();
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No messages in this conversation yet.";
+    messagesEl.append(empty);
+    window.__oldestId = null;
+    return;
+  }
+  window.__oldestId = items[0].id;
+  const older = document.createElement("button");
+  older.type = "button";
+  older.className = "more";
+  older.textContent = "Load earlier messages";
+  older.addEventListener("click", loadEarlier);
+  messagesEl.append(older);
+  for (const msg of items) {
+    knownIds.add(msg.id);
+    messagesEl.append(bubbleFor(msg, false));
+  }
+  if (stickToBottom || nearBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function setThreadFace(convo) {
+  if (convo && convo.photo) {
+    threadFace.hidden = false;
+    threadFaceImg.src = photoUrl(convo.userId, convo.photo);
+  } else {
+    threadFace.hidden = true;
+    threadFaceImg.removeAttribute("src");
+  }
+}
+
+async function openConvo(convo) {
+  active = convo;
+  knownIds = new Set();
+  stickToBottom = true;
+  theirReadId = convo.theirReadId || "";
+  threadTitle.textContent = convo.age ? String(convo.age) : "Chat";
+  threadError.textContent = "";
+  setThreadFace(convo);
+  threadEl.hidden = false;
+  closeProfile();
+  photoDrawer.hidden = true;
+  messagesEl.replaceChildren();
+  if (!convo.conversationId) {
+    renderMessages([]);
+    return;
+  }
+  const res = await fetch("/api/thread?conversationId=" + encodeURIComponent(convo.conversationId));
+  const data = await requireOk(res);
+  if (!res.ok) {
+    threadError.textContent = data.error || "Could not load messages";
+    return;
+  }
+  if (data.theirReadId) theirReadId = data.theirReadId;
+  let items = data.messages || [];
+  if (!items.length && active.preview) items = [previewMessage(active)];
+  renderMessages(items);
+  const newest = items[items.length - 1];
+  if (newest && !newest.mine && newest.id && !String(newest.id).startsWith("preview-")) {
+    fetch("/api/read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId: convo.conversationId,
+        userId: convo.userId,
+        messageId: newest.id,
+      }),
+    }).catch(() => {});
+  }
+}
+
+threadFace.addEventListener("click", () => {
+  if (active && active.userId) openProfile(active.userId);
+});
+
+async function loadEarlier() {
+  if (!active || !window.__oldestId) return;
+  const res = await fetch(
+    "/api/thread?conversationId=" + encodeURIComponent(active.conversationId) +
+    "&before=" + encodeURIComponent(window.__oldestId)
+  );
+  const data = await requireOk(res);
+  if (!res.ok) {
+    threadError.textContent = data.error || "Could not load earlier messages";
+    return;
+  }
+  const items = (data.messages || []).filter((msg) => msg.id && !knownIds.has(msg.id));
+  if (!items.length) return;
+  const prev = messagesEl.scrollHeight;
+  const frag = document.createDocumentFragment();
+  for (const msg of items) {
+    knownIds.add(msg.id);
+    frag.append(bubbleFor(msg, false));
+  }
+  const older = messagesEl.querySelector(".more");
+  if (older) older.after(frag);
+  else messagesEl.prepend(frag);
+  window.__oldestId = items[0].id;
+  messagesEl.scrollTop = messagesEl.scrollHeight - prev;
+}
+
+async function pollThread() {
+  if (!active || threadEl.hidden) return;
+  const res = await fetch("/api/thread?conversationId=" + encodeURIComponent(active.conversationId));
+  const data = await requireOk(res);
+  if (!res.ok) return;
+  let items = data.messages || [];
+  if (!items.length && active.preview) items = [previewMessage(active)];
+  const grew = items.some((msg) => msg.id && !knownIds.has(msg.id));
+  const readChanged = data.theirReadId && data.theirReadId !== theirReadId;
+  if (data.theirReadId) theirReadId = data.theirReadId;
+  if (!grew && knownIds.size && !readChanged) return;
+  renderMessages(items);
+}
+
+document.getElementById("back").addEventListener("click", () => {
+  threadEl.hidden = true;
+  active = null;
+  render();
+});
+
+function takePhoto(input) {
+  const file = input.files && input.files[0];
+  if (!file) return null;
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    input.value = "";
+    throw new Error("Use a JPEG, PNG, or WebP photo.");
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    input.value = "";
+    throw new Error("Photo must be under 8 MB.");
+  }
+  return file;
+}
+
+function showAttached(input, note, file) {
+  note.hidden = !file;
+  note.textContent = file ? "Photo attached" : "";
+}
+
+threadPhoto.addEventListener("change", () => {
+  try {
+    threadFile = takePhoto(threadPhoto);
+    showAttached(threadPhoto, document.getElementById("threadAttached"), threadFile);
+    threadError.textContent = "";
+    photoDrawer.hidden = true;
+  } catch (err) {
+    threadFile = null;
+    showAttached(threadPhoto, document.getElementById("threadAttached"), null);
+    threadError.textContent = err.message;
+  }
+});
+
+communityPhoto.addEventListener("change", () => {
+  try {
+    communityFile = takePhoto(communityPhoto);
+    showAttached(communityPhoto, document.getElementById("communityAttached"), communityFile);
+    communityError.textContent = "";
+    photoDrawer.hidden = true;
+  } catch (err) {
+    communityFile = null;
+    showAttached(communityPhoto, document.getElementById("communityAttached"), null);
+    communityError.textContent = err.message;
+  }
+});
+
+async function loadSavedPhotos() {
+  const res = await fetch("/api/photos");
+  const data = await requireOk(res);
+  if (data.me) meId = data.me;
+  savedPhotos = data.photos || [];
+  photoTray.replaceChildren();
+  document.getElementById("photoDrawerError").textContent = savedPhotos.length ? "" : "No saved photos yet.";
+  for (const file of savedPhotos) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = chatPhotoUrl(meId, file);
+    btn.append(img);
+    btn.addEventListener("click", () => sendSaved(file));
+    photoTray.append(btn);
+  }
+}
+
+async function openPhotoDrawer(scope) {
+  photoScope = scope;
+  photoDrawer.hidden = false;
+  document.getElementById("photoDrawerError").textContent = "";
+  try { await loadSavedPhotos(); }
+  catch (err) {
+    if (err.message !== "login") document.getElementById("photoDrawerError").textContent = err.message || "Could not load photos.";
+  }
+}
+
+document.getElementById("threadPhotoBtn").addEventListener("click", () => openPhotoDrawer("thread"));
+document.getElementById("communityPhotoBtn").addEventListener("click", () => openPhotoDrawer("community"));
+document.getElementById("photoDrawerClose").addEventListener("click", () => { photoDrawer.hidden = true; });
+photoDrawer.addEventListener("click", (event) => { if (event.target === photoDrawer) photoDrawer.hidden = true; });
+document.getElementById("photoDrawerNew").addEventListener("click", () => {
+  if (photoScope === "community") communityPhoto.click();
+  else threadPhoto.click();
+});
+
+async function sendSaved(file) {
+  if (sending) return;
+  sending = true;
+  document.getElementById("photoDrawerError").textContent = "";
+  try {
+    if (photoScope === "community") {
+      const res = await fetch("/api/photo/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "community", file, body: communityBox.value.trim() }),
+      });
+      const data = await requireOk(res);
+      if (!res.ok) throw new Error(data.error || "Photo failed to send");
+      communityBox.value = "";
+      stickCommunity = true;
+      knownCommunity = new Set();
+      photoDrawer.hidden = true;
+      await refreshCommunity();
+    } else {
+      if (!active) throw new Error("Open a chat first.");
+      const res = await fetch("/api/photo/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: active.conversationId,
+          userId: active.userId,
+          file,
+        }),
+      });
+      const data = await requireOk(res);
+      if (!res.ok) throw new Error(data.error || "Photo failed to send");
+      photoDrawer.hidden = true;
+      stickToBottom = true;
+      await pollThread();
+      await refreshInbox();
+    }
+  } catch (err) {
+    if (err.message !== "login") document.getElementById("photoDrawerError").textContent = err.message || "Photo failed to send";
+  } finally {
+    sending = false;
+  }
+}
+
+async function postPhoto(file, params) {
+  const res = await fetch("/api/photo?" + params.toString(), {
+    method: "POST",
+    headers: { "Content-Type": file.type },
+    body: file,
+  });
+  const data = await requireOk(res);
+  if (!res.ok) throw new Error(data.error || "Photo failed to send");
+}
+
+document.getElementById("composer").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!active || sending) return;
+  const text = box.value.trim();
+  if (!text && !threadFile) return;
+  sending = true;
+  threadError.textContent = "";
+  document.getElementById("send").disabled = true;
+  try {
+    if (threadFile) {
+      const params = new URLSearchParams({
+        conversationId: active.conversationId,
+        userId: active.userId,
+      });
+      await postPhoto(threadFile, params);
+      threadFile = null;
+      threadPhoto.value = "";
+      showAttached(threadPhoto, document.getElementById("threadAttached"), null);
+    }
+    if (text) {
+      const res = await fetch("/api/reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: active.conversationId,
+          userId: active.userId,
+          body: text,
+        }),
+      });
+      const data = await requireOk(res);
+      if (!res.ok) throw new Error(data.error || "Send failed");
+      if (data.conversationId) active.conversationId = data.conversationId;
+      box.value = "";
+    }
+    stickToBottom = true;
+    await pollThread();
+    await refreshInbox();
+  } catch (err) {
+    if (err.message !== "login") threadError.textContent = err.message || "Send failed";
+  } finally {
+    sending = false;
+    document.getElementById("send").disabled = false;
+  }
+});
+
+document.getElementById("communityComposer").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (sending) return;
+  const text = communityBox.value.trim();
+  if (!text && !communityFile) return;
+  sending = true;
+  communityError.textContent = "";
+  document.getElementById("communitySend").disabled = true;
+  try {
+    if (communityFile) {
+      const params = new URLSearchParams({ scope: "community" });
+      if (text) params.set("caption", text);
+      await postPhoto(communityFile, params);
+      communityFile = null;
+      communityPhoto.value = "";
+      communityBox.value = "";
+      showAttached(communityPhoto, document.getElementById("communityAttached"), null);
+    } else {
+      const res = await fetch("/api/community", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: text }),
+      });
+      const data = await requireOk(res);
+      if (!res.ok) throw new Error(data.error || "Send failed");
+      communityBox.value = "";
+    }
+    stickCommunity = true;
+    knownCommunity = new Set();
+    await refreshCommunity();
+  } catch (err) {
+    if (err.message !== "login") communityError.textContent = err.message || "Send failed";
+  } finally {
+    sending = false;
+    document.getElementById("communitySend").disabled = false;
+  }
+});
+
+communityBox.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    document.getElementById("communityComposer").requestSubmit();
+  }
+});
+communityMessages.addEventListener("scroll", () => {
+  stickCommunity = communityMessages.scrollHeight - communityMessages.scrollTop - communityMessages.clientHeight < 80;
+});
+box.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    document.getElementById("composer").requestSubmit();
+  }
+});
+messagesEl.addEventListener("scroll", () => {
+  stickToBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
+});
+
+function closeProfile() {
+  sheet.hidden = true;
+  if (placePane.hidden) document.body.classList.remove("profile-open");
+}
+
+function closePlace() {
+  placePane.hidden = true;
+  activePlace = null;
+  if (sheet.hidden) document.body.classList.remove("profile-open");
+}
+
+async function refreshPlaces(fresh) {
+  const res = await fetch("/api/places" + (fresh ? "?fresh=1" : ""));
+  const data = await requireOk(res);
+  if (!res.ok) return;
+  units = data.units || units;
+  places = data.places || [];
+  if (tab === "places") renderPlaces();
+}
+
+function renderPlaces() {
+  placesEl.replaceChildren();
+  if (!places.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No places nearby yet.";
+    placesEl.append(empty);
+    return;
+  }
+  for (const place of places) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "chat-row place-row";
+    const wrap = document.createElement("div");
+    wrap.className = "avatar-wrap";
+    if (place.photo) {
+      const img = document.createElement("img");
+      img.className = "avatar";
+      img.alt = "";
+      img.src = placePhotoUrl(place.photo);
+      wrap.append(img);
+    } else {
+      const blank = document.createElement("div");
+      blank.className = "avatar blank";
+      wrap.append(blank);
+    }
+    row.append(wrap);
+    const main = document.createElement("div");
+    main.className = "chat-main";
+    const top = document.createElement("div");
+    top.className = "chat-top";
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = place.name;
+    const time = document.createElement("div");
+    time.className = "time";
+    time.textContent = place.visitors ? place.visitors + " here" : "";
+    top.append(who, time);
+    const preview = document.createElement("div");
+    preview.className = "chat-preview";
+    const bits = [place.type];
+    const away = distanceLabel(place.distance);
+    if (away) bits.push(away);
+    if (place.campus) bits.push("Campus");
+    preview.textContent = bits.filter(Boolean).join(" · ");
+    main.append(top, preview);
+    row.append(main);
+    if (place.visitors > 0) {
+      const count = document.createElement("div");
+      count.className = "count";
+      count.textContent = place.visitors > 99 ? "99+" : String(place.visitors);
+      row.append(count);
+    }
+    row.addEventListener("click", () => openPlace(place.id));
+    placesEl.append(row);
+  }
+}
+
+function renderPlaceDetail(data) {
+  document.getElementById("placeTitle").textContent = data.name || "Place";
+  const bits = [];
+  if (data.type) bits.push(data.type);
+  const away = distanceLabel(data.distance);
+  if (away) bits.push(away);
+  if (data.visitors) bits.push(data.visitors + " here");
+  document.getElementById("placeSub").textContent = bits.join(" · ");
+  const photos = document.getElementById("placePhotos");
+  photos.replaceChildren();
+  for (const file of data.photos || []) {
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = placePhotoUrl(file);
+    photos.append(img);
+  }
+  const meta = document.getElementById("placeMeta");
+  meta.replaceChildren();
+  const lines = [];
+  if (data.address) lines.push(data.address);
+  if (data.description) lines.push(data.description);
+  if (data.summary) lines.push(data.summary);
+  if (data.campus) lines.push("Campus");
+  if (data.darkroom) lines.push("Darkroom");
+  if (data.visits) lines.push(data.visits + " recorded visits");
+  for (const line of lines) {
+    const p = document.createElement("p");
+    p.textContent = line;
+    meta.append(p);
+  }
+  const people = document.getElementById("placePeople");
+  people.replaceChildren();
+  for (const person of data.people || []) {
+    people.append(faceButton(person.userId, person.photo, () => openProfile(person.userId, person)));
+  }
+  const msgs = document.getElementById("placeMessages");
+  msgs.replaceChildren();
+  if (!(data.messages || []).length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No place chat yet.";
+    msgs.append(empty);
+  } else {
+    for (const msg of data.messages) {
+      msgs.append(bubbleFor(msg, true));
+    }
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+}
+
+async function openPlace(placeId) {
+  closeProfile();
+  activePlace = { id: placeId };
+  placePane.hidden = false;
+  document.body.classList.add("profile-open");
+  document.getElementById("placeError").textContent = "";
+  document.getElementById("placeTitle").textContent = "Place";
+  document.getElementById("placeSub").textContent = "Loading…";
+  try {
+    const res = await fetch("/api/place?placeId=" + encodeURIComponent(placeId));
+    const data = await requireOk(res);
+    if (!res.ok) {
+      document.getElementById("placeError").textContent = data.error || "Could not load place.";
+      return;
+    }
+    activePlace = data;
+    renderPlaceDetail(data);
+  } catch (err) {
+    if (err.message !== "login") document.getElementById("placeError").textContent = err.message || "Could not load place.";
+  }
+}
+
+function fillProfilePhotos(userId, files) {
+  const stack = document.getElementById("sheetPhotos");
+  stack.replaceChildren();
+  for (const file of files) {
+    if (!file) continue;
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = photoUrl(userId, file);
+    stack.append(img);
+  }
+}
+
+async function openProfile(userId, fallback) {
+  closePlace();
+  sheetProfile = { id: userId };
+  photoDrawer.hidden = true;
+  sheet.hidden = false;
+  document.body.classList.add("profile-open");
+  document.getElementById("sheetTitle").textContent = "Profile";
+  document.getElementById("sheetMeta").textContent = "Loading…";
+  document.getElementById("sheetNote").textContent = "";
+  sheetMessage.hidden = false;
+  const fallbackFiles = fallback && fallback.photo ? [fallback.photo] : [];
+  fillProfilePhotos(userId, fallbackFiles);
+  try {
+    const res = await fetch("/api/profile?userId=" + encodeURIComponent(userId));
+    const data = await requireOk(res);
+    if (!res.ok) {
+      document.getElementById("sheetNote").textContent = data.error || "Could not load profile.";
+      return;
+    }
+    sheetProfile = data;
+    const files = (data.photos && data.photos.length) ? data.photos : (data.photo ? [data.photo] : fallbackFiles);
+    fillProfilePhotos(data.id, files);
+    const bits = [];
+    if (data.age) bits.push(String(data.age));
+    const away = distanceLabel(data.distance);
+    if (away) bits.push(away);
+    document.getElementById("sheetTitle").textContent = bits.join(" · ") || "Profile";
+    document.getElementById("sheetMeta").textContent = data.online ? "Online" : "Offline";
+    document.getElementById("sheetNote").textContent = data.blurb || "";
+    const convo = conversations.find((c) => c.userId === data.id);
+    const conversationId = data.conversationId || (convo && convo.conversationId) || (fallback && fallback.conversationId);
+    sheetMessage.hidden = false;
+    if (conversationId) sheetProfile.conversationId = conversationId;
+  } catch (err) {
+    if (err.message !== "login") document.getElementById("sheetNote").textContent = err.message || "Could not load profile.";
+  }
+}
+
+sheetMessage.addEventListener("click", () => {
+  const profile = sheetProfile;
+  if (!profile || !profile.id) return;
+  const existing = conversations.find((c) => c.userId === profile.id);
+  const convo = existing || {
+    conversationId: profile.conversationId || "",
+    userId: profile.id,
+    age: profile.age,
+    photo: profile.photo,
+    online: profile.online,
+    unread: 0,
+    preview: "",
+    lastAt: "",
+    mine: false,
+  };
+  closeProfile();
+  openConvo(convo);
+});
+
+document.getElementById("sheetClose").addEventListener("click", () => closeProfile());
+document.getElementById("placeClose").addEventListener("click", () => closePlace());
+document.getElementById("placeComposer").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!activePlace || !activePlace.id || sending) return;
+  const text = document.getElementById("placeBox").value.trim();
+  if (!text) return;
+  sending = true;
+  document.getElementById("placeError").textContent = "";
+  document.getElementById("placeSend").disabled = true;
+  try {
+    const res = await fetch("/api/place/message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ placeId: activePlace.id, body: text }),
+    });
+    const data = await requireOk(res);
+    if (!res.ok) throw new Error(data.error || "Send failed");
+    document.getElementById("placeBox").value = "";
+    activePlace = data;
+    renderPlaceDetail(data);
+  } catch (err) {
+    if (err.message !== "login") document.getElementById("placeError").textContent = err.message || "Send failed";
+  } finally {
+    sending = false;
+    document.getElementById("placeSend").disabled = false;
+  }
+});
+document.getElementById("placeBox").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    document.getElementById("placeComposer").requestSubmit();
+  }
+});
+
+notifyBtn.addEventListener("click", () => {
+  notifyPanel.hidden = !notifyPanel.hidden;
+  notifyBtn.classList.toggle("on", !notifyPanel.hidden);
+});
+
+function notifyNote(data) {
+  if (data.lastError) return data.lastError;
+  if (data.enabled && data.seeded) return "Watching private chats and community for those words.";
+  if (data.enabled) return "The first check records current chats and stays quiet.";
+  return "Turn this on, add keywords, then Save.";
+}
+
+async function loadNotify() {
+  const res = await fetch("/api/notify/settings");
+  const data = await res.json();
+  if (!res.ok) return;
+  document.getElementById("notifyOn").checked = !!data.enabled;
+  document.getElementById("notifyWords").value = data.words || "";
+  document.getElementById("notifyMsg").textContent = notifyNote(data);
+}
+
+notifyPanel.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  document.getElementById("notifyMsg").textContent = "Saving…";
+  const res = await fetch("/api/notify/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      enabled: document.getElementById("notifyOn").checked,
+      words: document.getElementById("notifyWords").value,
+    }),
+  });
+  const data = await res.json();
+  document.getElementById("notifyMsg").textContent = res.ok ? notifyNote(data) : (data.error || "Could not save.");
+});
+
+document.getElementById("notifyTest").addEventListener("click", async () => {
+  document.getElementById("notifyMsg").textContent = "Sending a test…";
+  const res = await fetch("/api/notify/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const data = await res.json();
+  document.getElementById("notifyMsg").textContent = res.ok ? "Sent a test notification to the desktop." : (data.error || "Test failed.");
+});
+
+async function boot() {
+  const res = await fetch("/api/session");
+  const data = await res.json().catch(() => ({}));
+  if (!data.loggedIn) {
+    showLogin("");
+    return;
+  }
+  paintAccounts(data);
+  await loadApp();
+}
+
+boot().catch(() => showLogin("Could not reach the app."));
+setInterval(() => {
+  if (!signedIn) return;
+  if (!threadEl.hidden) {
+    refreshInbox().catch(() => {});
+    pollThread().catch(() => {});
+    return;
+  }
+  if (tab === "chats") refreshInbox().catch(() => {});
+  else if (tab === "community") refreshCommunity().catch(() => {});
+}, 6000);
+setInterval(() => {
+  if (signedIn) refreshGrid(false).catch(() => {});
+}, 300000);
+</script>
+</body>
+</html>
