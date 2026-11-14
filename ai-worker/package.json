@@ -1,0 +1,14 @@
+{
+  "name": "sniffies-ai-responder",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "wrangler": "^3.80.0"
+  }
+}

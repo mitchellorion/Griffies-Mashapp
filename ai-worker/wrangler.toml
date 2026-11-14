@@ -1,0 +1,10 @@
+name = "sniffies-ai-responder"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+account_id = "c4d4136c203da4fea3a68e4ae292bb4c"
+
+[vars]
+MODEL = "@cf/meta/llama-3.1-8b-instruct-fast"
+
+[ai]
+binding = "AI"

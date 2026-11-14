@@ -12,18 +12,23 @@ text is spoken only when read-aloud is on, and it is never written to the log.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import io
 import json
 import os
 import re
 import secrets
 import subprocess
+import uuid
 import tempfile
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -79,14 +84,61 @@ _alexa_status_lock = threading.Lock()
 _alexa_status = {"lastError": "", "lastOk": ""}
 _alexa_wake = threading.Event()
 _alexa_stop = threading.Event()
+_auto_responder_status_lock = threading.Lock()
+_auto_responder_status = {"lastError": "", "lastOk": "", "enabled": False}
+_auto_responder_wake = threading.Event()
+_auto_responder_stop = threading.Event()
+_auto_responder_timer_lock = threading.Lock()
+_auto_responder_timer: threading.Timer | None = None
 _direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _auto_responder_cancel_wake() -> None:
+    global _auto_responder_timer
+    with _auto_responder_timer_lock:
+        if _auto_responder_timer is not None:
+            try:
+                _auto_responder_timer.cancel()
+            except Exception:
+                pass
+            _auto_responder_timer = None
+
+
+def _auto_responder_schedule_wake(seconds: float) -> None:
+    global _auto_responder_timer
+    with _auto_responder_timer_lock:
+        if _auto_responder_timer is not None:
+            try:
+                _auto_responder_timer.cancel()
+            except Exception:
+                pass
+        _auto_responder_timer = threading.Timer(max(0.1, seconds), _auto_responder_wake.set)
+        _auto_responder_timer.daemon = True
+        _auto_responder_timer.start()
+
+
+def _auto_responder_disable() -> None:
+    """Immediately disable and cancel any queued reply."""
+    _set_auto_responder_status(enabled=False)
+    _auto_responder_cancel_wake()
+    state = load_state_auto_responder()
+    if state.get("pending"):
+        state["pending"] = {}
+        _save_state_auto_responder(state)
+    _auto_responder_wake.set()
+
+
 _explicit = False
 _unflagged: set[str] = set()
 _own_loc: list[float] | None = None
+_pin: dict | None = None
 _account_type = ""
 _units = "imperial"
 _country = "US"
 _chat_photos: list[str] = []
+_grindr: dict | None = None
+_grindr_http = None
+_grindr_http_lock = threading.Lock()
 _partner_read: dict[str, str] = {}
 _profiles: dict[str, dict] = {}
 _account_email = ""
@@ -102,6 +154,65 @@ GRID_TTL = 300
 PLACE_HOST = "place.sniffiesassets.com"
 PHOTO_KEEP = 40
 LOGIN_HOSTS = ("uswapi2.sniffies.com", "uswapi.sniffies.com")
+GRINDR_ORIGIN = "https://grindr.mobi"
+GRINDR_UA = "grindr3/26.20.0.187695;187695;Free;Android 13;Pixel 7;Google"
+GRINDR_HASH_RE = re.compile(r"^[A-Za-z0-9_-]{6,128}$")
+GRINDR_CONVO_RE = re.compile(r"^[0-9]+:[0-9]+$")
+GRINDR_MESSAGE_RE = re.compile(r"^[0-9]{10,16}:[0-9a-fA-F-]{32,40}$")
+SNIFFIES_REACTIONS = {"fire", "like", "sweat", "devil"}
+_GRINDR_CDN = {"cdns.grindr.com", "cdn.grindr.com"}
+
+_AUTO_RESPONDER_CONFIG = Path(
+    os.environ.get(
+        "SNIFFIES_AUTO_RESPONDER_CONFIG",
+        str(Path.home() / ".config" / "sniffies-messages" / "auto-responder.json"),
+    )
+)
+_AUTO_RESPONDER_STATE = Path(
+    os.environ.get(
+        "SNIFFIES_AUTO_RESPONDER_STATE",
+        str(Path.home() / ".config" / "sniffies-messages" / "auto-responder-state.json"),
+    )
+)
+AUTO_RESPONDER_POLL_SECONDS = int(
+    os.environ.get("SNIFFIES_AUTO_RESPONDER_POLL_SECONDS", "30")
+)
+_DEFAULT_AUTO_RESPONDER_PROMPT = (
+    "You are writing a short reply on behalf of a user in a casual gay "
+    "cruising/hookup chat app. Messages marked assistant are ones the user "
+    "has already sent; messages marked user are from the other person. "
+    "Reply naturally, briefly, and conversationally. Keep it under 200 "
+    "characters. Avoid explicit sexual content, contact details, promises "
+    "to meet, or anything that sounds robotic. If the last incoming message "
+    "is only a photo, react to it briefly."
+)
+
+_grindr_files: dict[str, str] = {}
+_grindr_drawer: dict[int, str] = {}
+_GEOHASH_ALPHABET = "0123456789bcdefghjkmnpqrstuvwxyz"
+# Grindr profile ids, shared with Sniffies string values after aliasing.
+BODY_SLUGS = {1: "toned", 2: "average", 3: "large", 4: "muscular", 5: "slim", 6: "stocky"}
+POSITION_SLUGS = {1: "top", 2: "bottom", 3: "versatile", 4: "vers-bottom", 5: "vers-top", 6: "side"}
+TRIBE_SLUGS = {
+    1: "bear", 2: "clean-cut", 3: "daddy", 4: "discreet", 5: "geek", 6: "jock",
+    7: "leather", 8: "otter", 9: "poz", 10: "rugged", 11: "trans", 12: "twink", 13: "sober",
+}
+_BODY_ALIAS = {
+    "slim": "slim", "skinny": "slim", "thin": "slim",
+    "toned": "toned", "athletic": "toned", "fit": "toned",
+    "average": "average",
+    "muscular": "muscular", "muscle": "muscular",
+    "stocky": "stocky",
+    "large": "large",
+}
+_POSITION_ALIAS = {
+    "top": "top", "bottom": "bottom", "side": "side",
+    "vers": "versatile", "versatile": "versatile",
+    "vers top": "vers-top", "vers-top": "vers-top", "versatile top": "vers-top",
+    "vers bottom": "vers-bottom", "vers-bottom": "vers-bottom", "versatile bottom": "vers-bottom",
+}
+_TRIBE_ALIAS = {slug: slug for slug in TRIBE_SLUGS.values()}
+_TRIBE_ALIAS["clean cut"] = "clean-cut"
 
 
 class ApiError(Exception):
@@ -291,6 +402,8 @@ def normalize_inbox(payload: dict) -> dict:
                 "mine": last.get("author") == user_id,
                 "accountType": person.get("accountType"),
                 "theirReadId": their_read,
+                "name": "",
+                "source": "sniffies",
             }
         )
     items.sort(key=lambda item: item.get("lastAt") or "", reverse=True)
@@ -365,10 +478,12 @@ def normalize_messages(payload: dict) -> dict:
                 "id": raw.get("id") or raw.get("_id"),
                 "body": raw.get("body"),
                 "file": file_name,
+                "image": None,
                 "author": author,
                 "mine": author == user_id,
                 "createdAt": raw.get("createdAt"),
                 "spam": bool(raw.get("isSpam")),
+                "reactions": _sniffies_reactions(raw.get("messageReactions"), user_id),
             }
         )
     messages.sort(key=lambda item: item.get("createdAt") or "")
@@ -479,16 +594,28 @@ def _remember_account(raw: bytes) -> None:
     account = udata.get("accountType")
     if isinstance(account, str) and account.isalpha() and len(account) <= 20:
         _account_type = account.lower()
-    photos = udata.get("chatPhotos")
+    private = user.get("private") if isinstance(user.get("private"), dict) else {}
+    photos = private.get("chatPhotos")
+    if not isinstance(photos, list):
+        photos = udata.get("chatPhotos")
     if not isinstance(photos, list):
         photos = user.get("chatPhotos")
     if isinstance(photos, list):
+        kept: list[str] = []
         for name in photos:
-            if isinstance(name, str):
-                _note_chat_photo(name, save=False)
+            if not isinstance(name, str):
+                continue
+            if "/" in name or "\\" in name:
+                name = name.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+            if FILE_RE.match(name) and name not in kept:
+                kept.append(name)
+        _chat_photos[:] = kept[:PHOTO_KEEP]
 
 
 def _note_chat_photo(name: str, save: bool = True) -> None:
+    # The account stores a short file name. A full chat URL is the same file.
+    if "/" in name or "\\" in name:
+        name = name.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
     if not FILE_RE.match(name):
         return
     if name in _chat_photos:
@@ -576,8 +703,16 @@ def _apply_account(acc: dict) -> None:
     _clear_live_caches()
 
 
+def _sniffies_in() -> bool:
+    return bool(_explicit and _jar.get("access_token"))
+
+
+def _grindr_in() -> bool:
+    return bool(_grindr and _grindr.get("session_id") and _grindr.get("auth_token"))
+
+
 def session_public() -> dict:
-    logged = bool(_explicit and _jar.get("access_token"))
+    logged = _sniffies_in()
     accounts = []
     for index, acc in enumerate(_accounts):
         if not isinstance(acc, dict):
@@ -589,8 +724,13 @@ def session_public() -> dict:
                 "active": index == _active,
             }
         )
+    grindr_email = str((_grindr or {}).get("email") or "")
     return {
-        "loggedIn": logged,
+        "loggedIn": logged or _grindr_in(),
+        "sniffies": logged,
+        "grindr": _grindr_in(),
+        "pinned": isinstance(_pin, dict),
+        "grindrLabel": (grindr_email[:2] + "…" + grindr_email[-6:]) if _grindr_in() and "@" in grindr_email else "",
         "active": _active if logged else -1,
         "canAdd": logged and len(_accounts) < 2,
         "accounts": accounts if logged else [],
@@ -598,12 +738,31 @@ def session_public() -> dict:
 
 
 def _save_session() -> None:
-    if not _accounts:
+    global _active
+    if _sniffies_in():
+        snap = _snapshot_account()
+        if not _accounts:
+            _accounts.append(snap)
+            _active = 0
+        elif 0 <= _active < len(_accounts):
+            _accounts[_active] = snap
+    if not _accounts and not _grindr_in():
         _clear_session_file()
         return
-    if _explicit and _jar.get("access_token") and 0 <= _active < len(_accounts):
-        _accounts[_active] = _snapshot_account()
-    payload = {"active": _active, "accounts": list(_accounts)}
+    payload: dict = {"active": _active, "accounts": list(_accounts)}
+    if isinstance(_pin, dict):
+        payload["pin"] = {"lat": _pin["lat"], "lng": _pin["lng"], "mode": _pin["mode"]}
+    if _grindr_in():
+        payload["grindr"] = {
+            "email": _grindr.get("email") or "",
+            "profile_id": _grindr.get("profile_id") or "",
+            "session_id": _grindr.get("session_id") or "",
+            "auth_token": _grindr.get("auth_token") or "",
+            "device": _grindr.get("device") or "",
+            "user_agent": _grindr.get("user_agent") or GRINDR_UA,
+            "exp": int(_grindr.get("exp") or 0),
+            "geohash": _grindr.get("geohash") if _valid_geohash(_grindr.get("geohash")) else "",
+        }
     _write_private(SESSION_FILE, payload)
 
 
@@ -661,15 +820,16 @@ def _load_session() -> None:
         if acc:
             loaded = [acc]
             _active = 0
-    if not loaded:
-        return
-    _accounts = loaded
-    _apply_account(_accounts[_active])
-    print("session restored")
+    if loaded:
+        _accounts = loaded
+        _apply_account(_accounts[_active])
+        print("session restored")
+    _restore_pin(raw.get("pin"))
+    _load_grindr(raw.get("grindr"))
 
 
 def _commit_account() -> None:
-    global _active
+    global _active, _accounts
     snap = _snapshot_account()
     uid = snap.get("user_id")
     for index, acc in enumerate(_accounts):
@@ -718,6 +878,10 @@ def login(email: str, password: str) -> dict:
         with _lock:
             if _explicit and _jar.get("access_token") and _accounts:
                 _accounts[_active] = _snapshot_account()
+            previous_jar = dict(_jar)
+            previous_explicit = _explicit
+            previous_email = _account_email
+            previous_host = _api_host
             _jar.clear()
             _jar.update(jar)
             _explicit = True
@@ -725,8 +889,16 @@ def login(email: str, password: str) -> dict:
             _account_email = email
             _chat_photos.clear()
             _clear_live_caches()
-            _remember_account(payload)
-            _commit_account()
+            try:
+                _remember_account(payload)
+                _commit_account()
+            except Exception:
+                _jar.clear()
+                _jar.update(previous_jar)
+                _explicit = previous_explicit
+                _account_email = previous_email
+                _api_host = previous_host
+                raise
         return session_public() | {"ok": True}
     if last_status in (401, 403):
         raise ApiError(401, "That email or password was not accepted.")
@@ -748,26 +920,37 @@ def switch_account(index: int) -> dict:
     return session_public()
 
 
-def logout() -> dict:
-    global _explicit, _own_loc, _account_type, _account_email, _active
+def logout(network: str = "both") -> dict:
+    global _explicit, _own_loc, _account_type, _account_email, _active, _grindr, _pin
+    network = network if network in ("sniffies", "grindr", "both") else "both"
     with _lock:
-        if _accounts and 0 <= _active < len(_accounts):
-            _accounts.pop(_active)
-        if _accounts:
-            _active = min(_active, len(_accounts) - 1)
-            _apply_account(_accounts[_active])
-            _save_session()
-            return session_public() | {"ok": True}
-        _jar.clear()
-        _explicit = False
-        _own_loc = None
-        _account_type = ""
-        _account_email = ""
-        _active = 0
-        _chat_photos.clear()
-        _clear_live_caches()
-    _clear_session_file()
-    return {"ok": True, "loggedIn": False, "accounts": [], "canAdd": False, "active": -1}
+        if network in ("grindr", "both"):
+            _grindr = None
+            _grindr_files.clear()
+            _grindr_drawer.clear()
+            _grid_cache["at"] = 0
+            _grid_cache["payload"] = None
+        if network in ("sniffies", "both"):
+            if _accounts and 0 <= _active < len(_accounts):
+                _accounts.pop(_active)
+            if _accounts and network == "sniffies":
+                _active = min(_active, len(_accounts) - 1)
+                _apply_account(_accounts[_active])
+                _save_session()
+                return session_public() | {"ok": True}
+            _jar.clear()
+            _explicit = False
+            _own_loc = None
+            _account_type = ""
+            _account_email = ""
+            _accounts.clear()
+            _active = 0
+            _chat_photos.clear()
+            _clear_live_caches()
+        if not _sniffies_in() and not _grindr_in():
+            _pin = None
+        _save_session()
+    return session_public() | {"ok": True}
 
 
 def _sfw_photo(images: list) -> str | None:
@@ -810,16 +993,17 @@ def _sfw_photos(images: list) -> list[str]:
 
 
 def _load_map_feed() -> dict:
-    global _own_loc, _feed_raw
-    if not _own_loc:
+    global _feed_raw
+    if not _home_coords():
         status, payload, _ctype = api("POST", "/api/authenticate/current", {})
         if status != 200:
             raise ApiError(status, _error_message(payload, status))
         with _lock:
             _remember_account(payload)
-    if not _own_loc:
+    point = _sniffies_coords()
+    if not point:
         raise ApiError(502, "Your profile has no location yet.")
-    lng, lat = _own_loc
+    lat, lng = point
     status, payload, _ctype = api(
         "POST",
         "/api/post-authentication",
@@ -876,6 +1060,7 @@ def _build_grid() -> dict:
         distance = raw.get("distance")
         distance = round(float(distance), 1) if isinstance(distance, (int, float)) and 0 <= distance < 20000 else None
         chat = chats.get(user_id) or {}
+        traits = _sniffies_traits(person)
         cards.append(
             {
                 "id": user_id,
@@ -886,23 +1071,853 @@ def _build_grid() -> dict:
                 "conversationId": chat.get("conversationId"),
                 "unread": int(chat.get("unread") or 0),
                 "source": "sniffies",
+                "heightCm": traits["heightCm"],
+                "weightKg": traits["weightKg"],
+                "body": traits["body"],
+                "position": traits["position"],
+                "tags": traits["tags"],
             }
         )
     cards.sort(key=lambda card: (card["distance"] is None, card["distance"] or 0))
     return {"units": _units, "cards": cards}
 
 
-def fetch_grid(fresh: bool = False) -> dict:
+def _load_grindr(raw: object) -> None:
+    global _grindr
+    if not isinstance(raw, dict):
+        return
+    email = raw.get("email") if isinstance(raw.get("email"), str) else ""
+    session_id = raw.get("session_id") if isinstance(raw.get("session_id"), str) else ""
+    auth_token = raw.get("auth_token") if isinstance(raw.get("auth_token"), str) else ""
+    device = raw.get("device") if isinstance(raw.get("device"), str) else ""
+    if "@" not in email or len(session_id) < 20 or len(auth_token) < 8 or ";" not in device:
+        return
+    _grindr = {
+        "email": email[:200],
+        "profile_id": str(raw.get("profile_id") or "")[:40],
+        # Session JWTs carry feature flags and run past 4k. Cutting them
+        # makes every later call look signed out.
+        "session_id": session_id[:16000],
+        "auth_token": auth_token[:16000],
+        "device": device[:200],
+        "user_agent": raw.get("user_agent") if isinstance(raw.get("user_agent"), str) else GRINDR_UA,
+        "exp": int(raw.get("exp") or 0) if isinstance(raw.get("exp"), int) else 0,
+        "geohash": raw.get("geohash") if _valid_geohash(raw.get("geohash")) else "",
+    }
+    print("grindr session restored")
+
+
+def _new_grindr_device() -> str:
+    # totalMem from a Pixel-class device. A round 8000000000 is not a real reading.
+    return f"{secrets.token_hex(8)};GLOBAL;2;8026152960;2400x1080;{uuid.uuid4()}"
+
+
+def _jwt_exp(token: str) -> int:
+    try:
+        part = token.split(".")[1]
+        part += "=" * (-len(part) % 4)
+        data = json.loads(base64.urlsafe_b64decode(part))
+        exp = data.get("exp")
+        return int(exp) if isinstance(exp, (int, float)) else 0
+    except Exception:
+        return 0
+
+
+def _grindr_http_client():
+    global _grindr_http
+    if _grindr_http is not None:
+        return _grindr_http
+    with _grindr_http_lock:
+        if _grindr_http is None:
+            try:
+                from wreq import Emulation
+                from wreq.blocking import Client
+                from wreq.redirect import Policy
+            except ImportError as exc:
+                raise ApiError(502, "Grindr sign-in needs the wreq package.") from exc
+            # OkHttp's TLS and HTTP/2 fingerprint. curl is refused by Cloudflare
+            # with an HTML 403 before the API sees the request.
+            _grindr_http = Client(
+                emulation=Emulation.OkHttp5,
+                timeout=timedelta(seconds=25),
+                redirect=Policy.none(),
+                no_proxy=True,
+                gzip=True,
+            )
+        return _grindr_http
+
+
+def _grindr_headers(session_id: str | None, *, real_device: bool = False, anon_device: bool = False) -> list[tuple[str, str]]:
+    current = _grindr or {}
+    # Order matches the Android client: the device-info flag, then
+    # authorization, timezone, roles, device, accept, user-agent, locale.
+    headers: list[tuple[str, str]] = []
+    if real_device:
+        headers.append(("requirerealdeviceinfo", "true"))
+    if anon_device:
+        headers.append(("requireanondeviceinfo", "true"))
+    if session_id:
+        headers.append(("authorization", "Grindr3 " + session_id))
+    headers.append(("l-time-zone", "America/Los_Angeles"))
+    if session_id:
+        headers.append(("l-grindr-roles", "[FREE]"))
+    headers.append(("l-device-info", str(current.get("device") or "")))
+    headers.append(("accept", "application/json"))
+    headers.append(("user-agent", str(current.get("user_agent") or GRINDR_UA)))
+    headers.append(("l-locale", "en_US"))
+    headers.append(("accept-language", "en-US"))
+    headers.append(("accept-encoding", "gzip"))
+    return headers
+
+
+def _grindr_call(
+    method: str,
+    path: str,
+    body: dict | None = None,
+    session_id: str | None = None,
+    *,
+    real_device: bool = False,
+    anon_device: bool = False,
+    raw: bytes | None = None,
+    content_type: str | None = None,
+) -> tuple[int, bytes]:
+    try:
+        from wreq import Method
+    except ImportError as exc:
+        raise ApiError(502, "Grindr sign-in needs the wreq package.") from exc
+
+    headers = _grindr_headers(session_id, real_device=real_device, anon_device=anon_device)
+    payload = None
+    if raw is not None:
+        headers.append(("content-type", content_type or "application/octet-stream"))
+        payload = raw
+    elif body is not None:
+        headers.append(("content-type", "application/json; charset=utf-8"))
+        payload = json.dumps(body).encode()
+    verb = getattr(Method, method.upper(), None)
+    if verb is None:
+        raise ApiError(500, "Grindr did not accept the request.")
+    try:
+        response = _grindr_http_client().request(
+            verb,
+            GRINDR_ORIGIN + path,
+            headers=dict(headers),
+            orig_headers=[name for name, _value in headers],
+            body=payload,
+        )
+        return response.status.as_int(), bytes(response.bytes())
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise ApiError(502, "Could not reach Grindr.") from exc
+
+
+def _grindr_blocked(payload: bytes) -> bool:
+    sample = payload.lstrip()[:600].lower()
+    return sample.startswith(b"<") or b"cloudflare" in sample or b"<!doctype" in sample
+
+
+def _grindr_error(payload: bytes, status: int) -> str:
+    if _grindr_blocked(payload):
+        return "Grindr's network check blocked the sign-in. Try again."
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        data = None
+    if isinstance(data, dict):
+        message = str(data.get("message") or data.get("title") or "")
+        normalized = message.upper().replace(" ", "_")
+        if normalized == "INVALID_INPUT_PARAMETERS":
+            return "That Grindr email or password was not accepted."
+        if message == "ACCOUNT_BANNED":
+            return "Grindr blocked the sign-in. Open the official app once, then try again."
+        if data.get("type") == "urn:gr:err:geo_hash_decode":
+            return "Sign in to Sniffies so Grindr profiles can use your location."
+        if message:
+            return "Grindr did not accept the request."
+    if status in (401, 403):
+        return "Grindr asked you to sign in again."
+    return "Grindr did not accept the request."
+
+
+def _valid_geohash(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 12 and set(value) <= set(_GEOHASH_ALPHABET)
+
+
+def _store_grindr(email: str, data: dict, device: str, user_agent: str, geohash: object = None) -> None:
+    global _grindr
+    session_id = data.get("sessionId")
+    auth_token = data.get("authToken")
+    profile_id = data.get("profileId")
+    if not isinstance(session_id, str) or not isinstance(auth_token, str):
+        raise ApiError(502, "Grindr did not return a session.")
+    if not _valid_geohash(geohash):
+        current = _grindr.get("geohash") if isinstance(_grindr, dict) else ""
+        geohash = current if _valid_geohash(current) else ""
+    _grindr = {
+        "email": email,
+        "profile_id": str(profile_id or "")[:40],
+        "session_id": session_id,
+        "auth_token": auth_token,
+        "device": device,
+        "user_agent": user_agent,
+        "exp": _jwt_exp(session_id),
+        "geohash": geohash,
+    }
+    _grid_cache["at"] = 0
+    _grid_cache["payload"] = None
+    _save_session()
+
+
+def grindr_login(email: str, password: str) -> dict:
+    global _grindr
+    email = email.strip()
+    if "@" not in email or len(email) > 200 or any(ch.isspace() for ch in email):
+        raise ApiError(400, "Enter the email on the Grindr account.")
+    if not password or len(password) > 200:
+        raise ApiError(400, "Enter the password.")
+    device = (_grindr or {}).get("device") or _new_grindr_device()
+    user_agent = (_grindr or {}).get("user_agent") or GRINDR_UA
+    with _lock:
+        previous = dict(_grindr) if _grindr else None
+        _grindr = {"device": device, "user_agent": user_agent}
+    try:
+        status, payload = _grindr_call(
+            "POST",
+            "/v8/sessions",
+            {"email": email, "password": password, "token": None, "geohash": None},
+            real_device=True,
+        )
+    except ApiError:
+        with _lock:
+            _grindr = previous
+        raise
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        data = None
+    if _grindr_blocked(payload):
+        with _lock:
+            _grindr = previous
+        raise ApiError(502, _grindr_error(payload, status))
+    if status != 200 or not isinstance(data, dict):
+        with _lock:
+            _grindr = previous
+        raise ApiError(401 if status in (401, 403) else 502, _grindr_error(payload, status))
+    with _lock:
+        kept = previous.get("geohash") if isinstance(previous, dict) else ""
+        _store_grindr(email, data, device, user_agent, kept)
+    return session_public() | {"ok": True}
+
+
+def _refresh_grindr() -> None:
+    global _grindr
+    if not _grindr_in():
+        raise ApiError(401, "Sign in to Grindr.")
+    if int(_grindr.get("exp") or 0) > time.time() + 90:
+        return
+    status, payload = _grindr_call(
+        "POST",
+        "/v8/sessions",
+        {"email": _grindr["email"], "authToken": _grindr["auth_token"], "token": None, "geohash": None},
+        real_device=True,
+    )
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        data = None
+    if status != 200 or not isinstance(data, dict) or not isinstance(data.get("sessionId"), str):
+        raise ApiError(401, "Grindr asked you to sign in again.")
+    with _lock:
+        _store_grindr(_grindr["email"], data, _grindr["device"], _grindr["user_agent"])
+
+
+def _geohash12(lat: float, lon: float) -> str:
+    lat_range = [-90.0, 90.0]
+    lon_range = [-180.0, 180.0]
+    bits = (16, 8, 4, 2, 1)
+    even = True
+    bit = 0
+    chunk = 0
+    out: list[str] = []
+    while len(out) < 12:
+        if even:
+            mid = (lon_range[0] + lon_range[1]) / 2
+            if lon >= mid:
+                chunk |= bits[bit]
+                lon_range[0] = mid
+            else:
+                lon_range[1] = mid
+        else:
+            mid = (lat_range[0] + lat_range[1]) / 2
+            if lat >= mid:
+                chunk |= bits[bit]
+                lat_range[0] = mid
+            else:
+                lat_range[1] = mid
+        even = not even
+        if bit < 4:
+            bit += 1
+        else:
+            out.append(_GEOHASH_ALPHABET[chunk])
+            bit = 0
+            chunk = 0
+    return "".join(out)
+
+
+def _uk_coords(lat: float, lon: float) -> bool:
+    # Grindr locks an account when a location is set inside the UK.
+    return 49.5 <= lat <= 61.0 and -8.5 <= lon <= 2.0
+
+
+def _pair_coords(lat: object, lng: object) -> tuple[float, float] | None:
+    lat_n = _bounded_number(lat, -90, 90)
+    lng_n = _bounded_number(lng, -180, 180)
+    if lat_n is None or lng_n is None:
+        return None
+    return lat_n, lng_n
+
+
+def _home_coords() -> tuple[float, float] | None:
+    # Account home stays in _own_loc. A saved pin must not replace it, or the
+    # next sign-in response would be the only copy of the real location.
+    if not _own_loc or len(_own_loc) < 2:
+        return None
+    return _pair_coords(_own_loc[1], _own_loc[0])
+
+
+def _pin_coords() -> tuple[float, float] | None:
+    if not isinstance(_pin, dict):
+        return None
+    return _pair_coords(_pin.get("lat"), _pin.get("lng"))
+
+
+def _sniffies_coords() -> tuple[float, float] | None:
+    return _pin_coords() or _home_coords()
+
+
+def _restore_pin(raw: object) -> None:
+    global _pin
+    _pin = None
+    if not isinstance(raw, dict):
+        return
+    point = _pair_coords(raw.get("lat"), raw.get("lng"))
+    mode = raw.get("mode")
+    if point is None or mode not in ("live", "pin"):
+        return
+    lat, lng = point
+    _pin = {"lat": round(lat, 7), "lng": round(lng, 7), "mode": mode}
+
+
+def _drop_location_caches() -> None:
+    global _feed_raw
+    _grid_cache["at"] = 0.0
+    _grid_cache["payload"] = None
+    _places_cache["at"] = 0.0
+    _places_cache["payload"] = None
+    _feed_raw = None
+
+
+def _grindr_location_block(lat: float, lon: float) -> str:
+    if _country == "GB" or _uk_coords(lat, lon):
+        return "Grindr locks accounts when a location is set in the UK, so those profiles stay off this grid."
+    return ""
+
+
+def location_public() -> dict:
+    pin = _pin_coords()
+    home = _home_coords()
+    current = pin or home
+    return {
+        "lat": current[0] if current else None,
+        "lng": current[1] if current else None,
+        "pinned": pin is not None,
+        "mode": _pin.get("mode") if isinstance(_pin, dict) and pin else ("home" if home else ""),
+        "home": {"lat": home[0], "lng": home[1]} if home else None,
+    }
+
+
+def set_location(mode: str, lat: object, lng: object) -> dict:
+    global _pin
+    if not _sniffies_in() and not _grindr_in():
+        raise ApiError(401, "Log in.")
+    warning = ""
+    if mode == "home":
+        _pin = None
+        _drop_location_caches()
+        _save_session()
+        home = _home_coords()
+        if home:
+            warning = _move_grindr(home[0], home[1])
+        elif _grindr_in():
+            warning = "Sign in to Sniffies so Grindr can use the account location."
+        return location_public() | {"ok": True, "warning": warning}
+    if mode not in ("live", "pin"):
+        raise ApiError(400, "Unknown location.")
+    point = _pair_coords(lat, lng)
+    if point is None:
+        raise ApiError(400, "That point is not on the map.")
+    lat_n, lng_n = point
+    _pin = {"lat": round(lat_n, 7), "lng": round(lng_n, 7), "mode": mode}
+    _drop_location_caches()
+    _save_session()
+    warning = _move_grindr(lat_n, lng_n)
+    return location_public() | {"ok": True, "warning": warning}
+
+
+def _move_grindr(lat: float, lon: float) -> str:
+    if not _grindr_in():
+        return ""
+    blocked = _grindr_location_block(lat, lon)
+    if blocked:
+        return blocked
+    digest = _geohash12(lat, lon)
+    status, payload = _grindr_authed("PUT", "/v4/location", {"geohash": digest})
+    if status not in (200, 201, 204):
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    _remember_grindr_geohash(digest)
+    return ""
+
+
+_geocode_lock = threading.Lock()
+_geocode_at = 0.0
+
+
+def search_places(query: str) -> dict:
+    global _geocode_at
+    if not _sniffies_in() and not _grindr_in():
+        raise ApiError(401, "Log in.")
+    query = " ".join(str(query or "").split())
+    if len(query) < 2 or len(query) > 80:
+        raise ApiError(400, "Enter a place name.")
+    with _geocode_lock:
+        now = time.time()
+        if now - _geocode_at < 1:
+            raise ApiError(429, "Wait a moment and search again.")
+        _geocode_at = now
+    url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(
+        {"q": query, "format": "jsonv2", "limit": "5"}
+    )
+    proc = subprocess.run(
+        [
+            "curl",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "12",
+            "--max-redirs",
+            "0",
+            "-A",
+            "Nearby/1.0 (personal local map)",
+            "-H",
+            "Accept: application/json",
+            url,
+        ],
+        capture_output=True,
+    )
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise ApiError(502, "Search is unavailable.") from exc
+    if not isinstance(data, list):
+        raise ApiError(502, "Search is unavailable.")
+    results = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        point = _pair_coords(item.get("lat"), item.get("lon"))
+        label = item.get("display_name")
+        if point is None or not isinstance(label, str) or not label.strip():
+            continue
+        results.append({"label": label.strip()[:160], "lat": point[0], "lng": point[1]})
+        if len(results) >= 5:
+            break
+    return {"results": results}
+
+
+def _nearby_geohash() -> str:
+    coords = _sniffies_coords()
+    if coords is None:
+        saved = (_grindr or {}).get("geohash")
+        if _valid_geohash(saved):
+            return str(saved)
+        raise ApiError(502, "Sign in to Sniffies so Grindr profiles can use your location.")
+    lat, lon = coords
+    if _country == "GB" or _uk_coords(lat, lon):
+        raise ApiError(502, "Grindr locks accounts when a location is set in the UK, so those profiles stay off this grid.")
+    return _geohash12(lat, lon)
+
+
+def _remember_grindr_geohash(digest: str) -> None:
+    if not _grindr_in() or not _valid_geohash(digest) or _grindr.get("geohash") == digest:
+        return
+    _grindr["geohash"] = digest
+    _save_session()
+
+
+def _bounded_number(value: object, lo: float, hi: float) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if lo <= number <= hi:
+        return number
+    return None
+
+
+def _choice_slug(value: object, aliases: dict[str, str]) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    text = str(value).strip().lower().replace("_", " ").replace("-", " ")
+    text = " ".join(text.split())
+    return aliases.get(text) or aliases.get(text.replace(" ", "-"))
+
+
+def _id_slugs(value: object, table: dict[int, str]) -> list[str]:
+    raw = value if isinstance(value, list) else [value]
+    slugs: list[str] = []
+    for item in raw:
+        if isinstance(item, bool) or not isinstance(item, (int, float, str)):
+            continue
+        try:
+            number = int(item)
+        except (TypeError, ValueError):
+            continue
+        slug = table.get(number)
+        if slug and slug not in slugs:
+            slugs.append(slug)
+    return slugs
+
+
+def _label_list(value: object) -> list[str]:
+    raw = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    labels: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        text = " ".join(item.strip().lower().replace("_", " ").split())
+        if text and text not in labels:
+            labels.append(text)
+    return labels
+
+
+def _weight_kg(value: object) -> float | None:
+    number = _bounded_number(value, 40, 400000)
+    if number is None:
+        return None
+    if number > 400:
+        number = number / 1000
+    if 40 <= number <= 320:
+        return round(number, 1)
+    return None
+
+
+def _sniffies_traits(person: dict) -> dict:
+    profile = person.get("profile") if isinstance(person.get("profile"), dict) else {}
+    extended = profile.get("extended") if isinstance(profile.get("extended"), dict) else {}
+    stats = extended.get("stats") if isinstance(extended.get("stats"), dict) else {}
+    sexuality = extended.get("sexuality") if isinstance(extended.get("sexuality"), dict) else {}
+    identity = extended.get("identity") if isinstance(extended.get("identity"), dict) else {}
+    scene = extended.get("scene") if isinstance(extended.get("scene"), dict) else {}
+    height = _bounded_number(stats.get("heightInCm"), 120, 230)
+    tags: list[str] = []
+    for label in _label_list(identity.get("ethnicity")) + _label_list(identity.get("gender")):
+        tribe = _TRIBE_ALIAS.get(label) or _TRIBE_ALIAS.get(label.replace(" ", "-"))
+        if tribe and tribe not in tags:
+            tags.append(tribe)
+    for key in ("hosting", "public", "attraction", "fetishes", "kinks", "action", "interaction"):
+        for label in _label_list(scene.get(key)):
+            tribe = _TRIBE_ALIAS.get(label) or _TRIBE_ALIAS.get(label.replace(" ", "-"))
+            if tribe and tribe not in tags:
+                tags.append(tribe)
+    for label in _label_list(sexuality.get("expression")):
+        tribe = _TRIBE_ALIAS.get(label) or _TRIBE_ALIAS.get(label.replace(" ", "-"))
+        if tribe and tribe not in tags:
+            tags.append(tribe)
+    return {
+        "heightCm": int(round(height)) if height is not None else None,
+        "weightKg": _weight_kg(stats.get("weightInKg")),
+        "body": _choice_slug(stats.get("body"), _BODY_ALIAS),
+        "position": _choice_slug(sexuality.get("attitude") or sexuality.get("position"), _POSITION_ALIAS),
+        "tags": tags,
+    }
+
+
+def _grindr_traits(person: dict) -> dict:
+    height = _bounded_number(person.get("heightCm") if person.get("heightCm") is not None else person.get("height"), 120, 230)
+    weight = person.get("weightGrams") if person.get("weightGrams") is not None else person.get("weight")
+    tribes = person.get("tribes")
+    if not isinstance(tribes, list):
+        tribes = person.get("grindrTribes")
+    return {
+        "heightCm": int(round(height)) if height is not None else None,
+        "weightKg": _weight_kg(weight),
+        "body": (_id_slugs(person.get("bodyType"), BODY_SLUGS) or [None])[0],
+        "position": (_id_slugs(person.get("sexualPosition"), POSITION_SLUGS) or [None])[0],
+        "tags": _id_slugs(tribes, TRIBE_SLUGS),
+    }
+
+
+def _empty_filters() -> dict:
+    return {
+        "photo": False,
+        "online": False,
+        "ageMin": None,
+        "ageMax": None,
+        "heightMin": None,
+        "heightMax": None,
+        "weightMin": None,
+        "weightMax": None,
+        "bodies": [],
+        "positions": [],
+        "tribes": [],
+    }
+
+
+def _query_filters(query: dict) -> dict:
+    def flag(name: str) -> bool:
+        return (query.get(name) or ["0"])[0] == "1"
+
+    def bound(name: str, lo: float, hi: float) -> float | None:
+        raw = (query.get(name) or [""])[0].strip()
+        if not raw:
+            return None
+        return _bounded_number(raw, lo, hi)
+
+    def slugs(name: str, allowed: dict[int, str]) -> list[str]:
+        raw = (query.get(name) or [""])[0]
+        chosen: list[str] = []
+        for part in raw.split(","):
+            if not part.strip().isdigit():
+                continue
+            slug = allowed.get(int(part))
+            if slug and slug not in chosen:
+                chosen.append(slug)
+            if len(chosen) >= 13:
+                break
+        return chosen
+
+    age_min = bound("ageMin", 18, 99)
+    age_max = bound("ageMax", 18, 99)
+    if age_min is not None and age_max is not None and age_min > age_max:
+        age_min, age_max = age_max, age_min
+    height_min = bound("heightMin", 120, 230)
+    height_max = bound("heightMax", 120, 230)
+    if height_min is not None and height_max is not None and height_min > height_max:
+        height_min, height_max = height_max, height_min
+    weight_min = bound("weightMin", 40, 320)
+    weight_max = bound("weightMax", 40, 320)
+    if weight_min is not None and weight_max is not None and weight_min > weight_max:
+        weight_min, weight_max = weight_max, weight_min
+    filters = {
+        "photo": flag("photo"),
+        "online": flag("online"),
+        "ageMin": int(age_min) if age_min is not None else None,
+        "ageMax": int(age_max) if age_max is not None else None,
+        "heightMin": int(height_min) if height_min is not None else None,
+        "heightMax": int(height_max) if height_max is not None else None,
+        "weightMin": weight_min,
+        "weightMax": weight_max,
+        "bodies": slugs("bodies", BODY_SLUGS),
+        "positions": slugs("positions", POSITION_SLUGS),
+        "tribes": slugs("tribes", TRIBE_SLUGS),
+    }
+    return filters
+
+
+def _filters_active(filters: dict) -> bool:
+    return any(bool(value) for value in filters.values())
+
+
+def _grindr_photo(person: dict) -> str | None:
+    for key in ("profileImageMediaHash", "mediaHash", "primaryMediaHash"):
+        value = person.get(key)
+        if isinstance(value, str) and GRINDR_HASH_RE.match(value):
+            return value
+    url = person.get("primaryImageUrl")
+    if isinstance(url, str):
+        name = urllib.parse.urlparse(url).path.rstrip("/").split("/")[-1]
+        if GRINDR_HASH_RE.match(name):
+            return name
+    hashes = person.get("photoMediaHashes")
+    if isinstance(hashes, list):
+        for value in hashes:
+            if isinstance(value, str) and GRINDR_HASH_RE.match(value):
+                return value
+    return None
+
+
+def _cards_from_cascade(data: dict) -> list[dict]:
+    now_ms = time.time() * 1000
+    cards = []
+    seen: set[str] = set()
+    for item in data.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("type") or "")
+        if kind and "profile" not in kind:
+            continue
+        person = item.get("data") if isinstance(item.get("data"), dict) else item
+        profile_id = person.get("profileId")
+        if not isinstance(profile_id, (int, str)) or not str(profile_id).isdigit():
+            continue
+        card_id = "g:" + str(profile_id)
+        if card_id in seen:
+            continue
+        seen.add(card_id)
+        age = person.get("age")
+        age = int(age) if isinstance(age, (int, float)) and 18 <= int(age) <= 120 else None
+        meters = person.get("distanceMeters")
+        if not isinstance(meters, (int, float)):
+            meters = person.get("distance")
+        distance = round(float(meters) / 1609.344, 1) if isinstance(meters, (int, float)) and 0 <= meters < 20_000_000 else None
+        until = person.get("onlineUntil")
+        online = isinstance(until, (int, float)) and until > now_ms
+        name = person.get("displayName") if isinstance(person.get("displayName"), str) else ""
+        traits = _grindr_traits(person)
+        cards.append(
+            {
+                "id": card_id,
+                "age": age,
+                "distance": distance,
+                "online": online,
+                "photo": _grindr_photo(person),
+                "name": name.strip()[:40],
+                "source": "grindr",
+                "heightCm": traits["heightCm"],
+                "weightKg": traits["weightKg"],
+                "body": traits["body"],
+                "position": traits["position"],
+                "tags": traits["tags"],
+            }
+        )
+    return cards
+
+
+def _slug_ids(slugs: list, table: dict[int, str]) -> list[int]:
+    reverse = {slug: number for number, slug in table.items()}
+    return [reverse[slug] for slug in slugs if slug in reverse]
+
+
+def _grindr_cards(filters: dict | None = None) -> list[dict]:
+    _refresh_grindr()
+    digest = _nearby_geohash()
+    params: dict[str, object] = {"nearbyGeoHash": digest, "pageNumber": 1}
+    filters = filters or {}
+    if filters.get("online"):
+        params["onlineOnly"] = "true"
+    if filters.get("photo"):
+        params["photoOnly"] = "true"
+    if filters.get("ageMin") is not None:
+        params["ageMin"] = int(filters["ageMin"])
+    if filters.get("ageMax") is not None:
+        params["ageMax"] = int(filters["ageMax"])
+    if filters.get("heightMin") is not None:
+        params["heightCmMin"] = int(filters["heightMin"])
+    if filters.get("heightMax") is not None:
+        params["heightCmMax"] = int(filters["heightMax"])
+    if filters.get("weightMin") is not None:
+        params["weightGramsMin"] = int(round(float(filters["weightMin"]) * 1000))
+    if filters.get("weightMax") is not None:
+        params["weightGramsMax"] = int(round(float(filters["weightMax"]) * 1000))
+    bodies = _slug_ids(filters.get("bodies") or [], BODY_SLUGS)
+    positions = _slug_ids(filters.get("positions") or [], POSITION_SLUGS)
+    tribes = _slug_ids(filters.get("tribes") or [], TRIBE_SLUGS)
+    if bodies:
+        params["bodyTypes"] = ",".join(str(item) for item in bodies)
+    if positions:
+        params["sexualPositions"] = ",".join(str(item) for item in positions)
+    if tribes:
+        params["tribes"] = ",".join(str(item) for item in tribes)
+    path = "/v4/cascade?" + urllib.parse.urlencode(params)
+    status, payload = _grindr_call("GET", path, session_id=_grindr["session_id"])
+    if status == 401:
+        _refresh_grindr()
+        status, payload = _grindr_call("GET", path, session_id=_grindr["session_id"])
+    if status != 200:
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ApiError(502, "Grindr returned an unreadable grid.") from exc
+    if not isinstance(data, dict):
+        raise ApiError(502, "Grindr returned an unreadable grid.")
+    _remember_grindr_geohash(digest)
+    return _cards_from_cascade(data)
+
+
+def fetch_grindr_photo(media_hash: str) -> tuple[bytes, str]:
+    if not GRINDR_HASH_RE.match(media_hash):
+        raise ApiError(404, "Not found.")
+    urls = [
+        f"https://cdns.grindr.com/images/thumb/320x320/{media_hash}",
+        f"https://cdns.grindr.com/images/profile/1024x1024/{media_hash}",
+    ]
+    last = ApiError(404, "Photo unavailable.")
+    for url in urls:
+        try:
+            return _fetch_image(url)
+        except ApiError as exc:
+            last = exc
+    raise last
+
+
+def fetch_grid(fresh: bool = False, filters: dict | None = None) -> dict:
+    if not _sniffies_in() and not _grindr_in():
+        raise ApiError(401, "Log in.")
+    filters = filters or _empty_filters()
+    active = _filters_active(filters)
     now = time.time()
     with _lock:
         cached = _grid_cache.get("payload")
         cached_at = float(_grid_cache.get("at") or 0)
-    if not fresh and cached and now - cached_at < GRID_TTL:
+    if not active and not fresh and cached and now - cached_at < GRID_TTL:
         return cached
-    payload = _build_grid()
-    with _lock:
-        _grid_cache["at"] = time.time()
-        _grid_cache["payload"] = payload
+    cards: list[dict] = []
+    warnings: list[str] = []
+    units = _units
+    sniff_cards = None
+    reused_sniff = False
+    if not fresh and isinstance(cached, dict) and now - cached_at < GRID_TTL:
+        sniff_cards = [card for card in (cached.get("cards") or []) if card.get("source") != "grindr"]
+        units = cached.get("units") or units
+        reused_sniff = True
+    if _sniffies_in():
+        if sniff_cards is None:
+            try:
+                sniff = _build_grid()
+                sniff_cards = sniff.get("cards") or []
+                units = sniff.get("units") or units
+            except ApiError as exc:
+                warnings.append(exc.message)
+                sniff_cards = []
+        cards.extend(sniff_cards)
+    if _grindr_in():
+        try:
+            cards.extend(_grindr_cards(filters if active else None))
+        except ApiError as exc:
+            warnings.append(exc.message)
+    cards.sort(key=lambda card: (card["distance"] is None, card["distance"] or 0))
+    applied = {key: value for key, value in filters.items() if value} if active else {}
+    payload = {"units": units, "cards": cards, "warnings": warnings, "applied": applied}
+    if not active:
+        with _lock:
+            _grid_cache["at"] = time.time()
+            _grid_cache["payload"] = payload
+    elif _sniffies_in() and not reused_sniff:
+        old_grindr = []
+        if isinstance(cached, dict):
+            old_grindr = [card for card in (cached.get("cards") or []) if card.get("source") == "grindr"]
+        with _lock:
+            _grid_cache["at"] = time.time()
+            _grid_cache["payload"] = {
+                "units": units,
+                "cards": list(sniff_cards or []) + old_grindr,
+                "warnings": [],
+                "applied": {},
+            }
     return payload
 
 
@@ -1146,6 +2161,273 @@ def fetch_inbox() -> dict:
     return normalize_inbox(json.loads(payload))
 
 
+def _ms_iso(value: object) -> str:
+    if not isinstance(value, (int, float)):
+        return ""
+    seconds = float(value) / 1000
+    if seconds < 0 or seconds > 4_000_000_000:
+        return ""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(seconds))
+
+
+def _grindr_preview_text(preview: object) -> str:
+    if not isinstance(preview, dict) or preview.get("unsent") is True:
+        return ""
+    text = preview.get("text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()[:180]
+    kind = str(preview.get("type") or "")
+    return {
+        "Image": "Photo",
+        "ExpiringImage": "Photo",
+        "Video": "Video",
+        "PrivateVideo": "Video",
+        "Audio": "Audio",
+        "Location": "Location",
+        "Giphy": "GIF",
+        "Gaymoji": "Sticker",
+        "Album": "Album",
+        "ExpiringAlbum": "Album",
+        "ExpiringAlbumV2": "Album",
+    }.get(kind, "")
+
+
+def _grindr_conversations() -> list[dict]:
+    _refresh_grindr()
+    body = {
+        "unreadOnly": False,
+        "chemistryOnly": False,
+        "favoritesOnly": False,
+        "rightNowOnly": False,
+        "onlineNowOnly": False,
+        "distanceMeters": None,
+        "positions": [],
+    }
+    status, payload = _grindr_call("POST", "/v4/inbox?page=1", body, session_id=_grindr["session_id"])
+    if status == 401:
+        _refresh_grindr()
+        status, payload = _grindr_call("POST", "/v4/inbox?page=1", body, session_id=_grindr["session_id"])
+    if status != 200:
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ApiError(502, "Grindr returned an unreadable inbox.") from exc
+    if not isinstance(data, dict):
+        raise ApiError(502, "Grindr returned an unreadable inbox.")
+    me = str((_grindr or {}).get("profile_id") or "")
+    now_ms = time.time() * 1000
+    items = []
+    for entry in data.get("entries") or []:
+        if not isinstance(entry, dict):
+            continue
+        person = entry.get("data") if isinstance(entry.get("data"), dict) else {}
+        convo_id = person.get("conversationId")
+        if not isinstance(convo_id, str) or not GRINDR_CONVO_RE.match(convo_id):
+            continue
+        other = ""
+        photo = None
+        online = False
+        for part in person.get("participants") or []:
+            if not isinstance(part, dict):
+                continue
+            profile_id = part.get("profileId")
+            if not isinstance(profile_id, (int, str)) or not str(profile_id).isdigit():
+                continue
+            if str(profile_id) == me:
+                continue
+            other = str(profile_id)
+            media = part.get("primaryMediaHash")
+            if isinstance(media, str) and GRINDR_HASH_RE.match(media):
+                photo = media
+            until = part.get("onlineUntil")
+            online = isinstance(until, (int, float)) and until > now_ms
+            break
+        if not other:
+            continue
+        preview = person.get("preview") if isinstance(person.get("preview"), dict) else {}
+        sender = preview.get("senderId")
+        name = person.get("name") if isinstance(person.get("name"), str) else ""
+        unread = person.get("unreadCount")
+        items.append(
+            {
+                "conversationId": convo_id,
+                "userId": "g:" + other,
+                "age": None,
+                "name": name.strip()[:40],
+                "photo": photo,
+                "online": online,
+                "unread": int(unread) if isinstance(unread, (int, float)) and unread >= 0 else 0,
+                "preview": _grindr_preview_text(preview),
+                "lastAt": _ms_iso(person.get("lastActivityTimestamp")),
+                "mine": str(sender) == me if sender is not None else False,
+                "source": "grindr",
+                "theirReadId": "",
+            }
+        )
+    return items
+
+
+def fetch_chats() -> dict:
+    items: list[dict] = []
+    me_id = ""
+    warnings: list[str] = []
+    if _sniffies_in():
+        try:
+            sniff = fetch_inbox()
+            me_id = str(sniff.get("me") or "")
+            items.extend(sniff.get("conversations") or [])
+        except ApiError as exc:
+            warnings.append(exc.message)
+    if _grindr_in():
+        try:
+            items.extend(_grindr_conversations())
+        except ApiError as exc:
+            warnings.append(exc.message)
+    items.sort(key=lambda item: item.get("lastAt") or "", reverse=True)
+    return {"me": me_id, "conversations": items, "warnings": warnings}
+
+
+def _sniffies_reactions(raw: object, me_id: str) -> list[dict]:
+    if not isinstance(raw, list):
+        return []
+    items = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        emoji = entry.get("reaction")
+        by = entry.get("byUserId")
+        if emoji not in SNIFFIES_REACTIONS or not isinstance(by, str) or not USER_ID_RE.match(by):
+            continue
+        items.append({"by": by, "emoji": emoji, "mine": by == me_id})
+    return items
+
+
+def _cloudfront_host(host: str) -> bool:
+    # Chat and drawer files are signed CloudFront URLs. The distribution label
+    # changes, and the API tells us the full URL. One label only, so this is
+    # not an open redirect onto some other suffix.
+    suffix = ".cloudfront.net"
+    if not host.endswith(suffix):
+        return False
+    label = host[: -len(suffix)]
+    return bool(label) and re.fullmatch(r"[a-z0-9-]+", label) is not None
+
+
+def _grindr_cdn_url(url: object) -> str | None:
+    if not isinstance(url, str) or not url or len(url) > 4000:
+        return None
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or parsed.username or parsed.port not in (None, 443):
+        return None
+    if host not in _GRINDR_CDN and not _cloudfront_host(host):
+        return None
+    return url
+
+
+def _remember_grindr_file(url: object) -> str | None:
+    clean = _grindr_cdn_url(url)
+    if not clean:
+        return None
+    token = hashlib.sha256(clean.encode()).hexdigest()[:32]
+    _grindr_files[token] = clean
+    if len(_grindr_files) > 400:
+        for key in list(_grindr_files)[:100]:
+            _grindr_files.pop(key, None)
+        _grindr_files[token] = clean
+    return "/media/gfile/" + token
+
+
+def _grindr_reactions(raw: object, me_id: str) -> list[dict]:
+    if not isinstance(raw, list):
+        return []
+    items = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        profile_id = entry.get("profileId")
+        kind = entry.get("reactionType")
+        if isinstance(profile_id, bool) or not isinstance(profile_id, int) or profile_id <= 0:
+            continue
+        if kind != 1:
+            continue
+        who = "g:" + str(profile_id)
+        items.append({"by": who, "emoji": "fire", "mine": str(profile_id) == me_id})
+    return items
+
+
+def _grindr_message_text(raw: dict) -> str:
+    if raw.get("unsent") is True:
+        return ""
+    body = raw.get("body") if isinstance(raw.get("body"), dict) else {}
+    text = body.get("text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()[:2000]
+    return _grindr_preview_text({"type": raw.get("type"), "text": text})
+
+
+def fetch_grindr_thread(conversation_id: str, before: str | None) -> dict:
+    if not GRINDR_CONVO_RE.match(conversation_id):
+        raise ApiError(400, "Unknown conversation.")
+    if not _grindr_in():
+        raise ApiError(401, "Sign in to Grindr.")
+    _refresh_grindr()
+    path = "/v5/chat/conversation/" + urllib.parse.quote(conversation_id, safe=":") + "/message"
+    if before:
+        path += "?" + urllib.parse.urlencode({"pageKey": before})
+    status, payload = _grindr_call("GET", path, session_id=_grindr["session_id"])
+    if status == 401:
+        _refresh_grindr()
+        status, payload = _grindr_call("GET", path, session_id=_grindr["session_id"])
+    if status != 200:
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ApiError(502, "Grindr returned an unreadable chat.") from exc
+    if not isinstance(data, dict):
+        raise ApiError(502, "Grindr returned an unreadable chat.")
+    me = str((_grindr or {}).get("profile_id") or "")
+    messages = []
+    for raw in data.get("messages") or []:
+        if not isinstance(raw, dict):
+            continue
+        message_id = raw.get("messageId")
+        if not isinstance(message_id, str) or not message_id or len(message_id) > 80:
+            continue
+        sender = raw.get("senderId")
+        if isinstance(sender, bool):
+            sender_id = ""
+        elif isinstance(sender, (int, float)):
+            sender_id = str(int(sender))
+        elif isinstance(sender, str) and sender.isdigit():
+            sender_id = sender
+        else:
+            sender_id = ""
+        body = raw.get("body") if isinstance(raw.get("body"), dict) else {}
+        kind = str(raw.get("type") or "")
+        image = None
+        if kind in ("Image", "ExpiringImage") and raw.get("unsent") is not True:
+            image = _remember_grindr_file(body.get("url"))
+        text = None if image else _grindr_message_text(raw)
+        messages.append(
+            {
+                "id": message_id,
+                "body": text or None,
+                "file": None,
+                "image": image,
+                "author": ("g:" + sender_id) if sender_id else "",
+                "mine": bool(sender_id) and sender_id == me,
+                "createdAt": _ms_iso(raw.get("timestamp")),
+                "spam": False,
+                "reactions": _grindr_reactions(raw.get("reactions"), me),
+            }
+        )
+    messages.sort(key=lambda item: item.get("createdAt") or "")
+    return {"messages": messages, "theirReadId": "", "source": "grindr"}
+
+
 def fetch_more(earliest: str) -> dict:
     status, payload, _ctype = api(
         "POST",
@@ -1188,6 +2470,8 @@ def release_spam_flag(conversation_id: str, force: bool = False) -> None:
 
 
 def fetch_thread(conversation_id: str, before: str | None) -> dict:
+    if GRINDR_CONVO_RE.match(conversation_id):
+        return fetch_grindr_thread(conversation_id, before)
     if not USER_ID_RE.match(conversation_id):
         raise ApiError(400, "Unknown conversation.")
     release_spam_flag(conversation_id)
@@ -1258,7 +2542,262 @@ def start_conversation(user_id: str, text: str) -> dict:
     }
 
 
+def _grindr_other_id(user_id: str, conversation_id: str) -> str:
+    if user_id.startswith("g:"):
+        other = user_id[2:]
+        if other.isdigit():
+            return other
+    if GRINDR_CONVO_RE.match(conversation_id):
+        me = str((_grindr or {}).get("profile_id") or "")
+        left, right = conversation_id.split(":", 1)
+        if me and left == me:
+            return right
+        if me and right == me:
+            return left
+    return ""
+
+
+def send_grindr_reply(conversation_id: str, user_id: str, text: str) -> dict:
+    text = text.strip()
+    if not text:
+        raise ApiError(400, "Message is empty.")
+    if len(text) > 2000:
+        raise ApiError(400, "Message is too long.")
+    if not _grindr_in():
+        raise ApiError(401, "Sign in to Grindr.")
+    other = _grindr_other_id(user_id, conversation_id)
+    if not other.isdigit():
+        raise ApiError(400, "Unknown profile.")
+    _refresh_grindr()
+    body = {
+        "type": "Text",
+        "target": {"type": "Direct", "targetId": int(other)},
+        "body": {"text": text},
+    }
+    status, payload = _grindr_call("POST", "/v4/chat/message/send", body, session_id=_grindr["session_id"])
+    if status == 401:
+        _refresh_grindr()
+        status, payload = _grindr_call("POST", "/v4/chat/message/send", body, session_id=_grindr["session_id"])
+    if status == 403:
+        raise ApiError(403, "Grindr will not deliver a message to that profile.")
+    if status not in (200, 201):
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        data = {}
+    cid = data.get("conversationId") if isinstance(data, dict) else None
+    if not isinstance(cid, str) or not GRINDR_CONVO_RE.match(cid):
+        me = str((_grindr or {}).get("profile_id") or "")
+        if me.isdigit():
+            low, high = sorted((int(me), int(other)))
+            cid = f"{low}:{high}"
+        else:
+            cid = conversation_id
+    return {"ok": True, "conversationId": cid, "source": "grindr"}
+
+
+def _is_grindr_chat(conversation_id: str, user_id: str) -> bool:
+    return user_id.startswith("g:") or bool(GRINDR_CONVO_RE.match(conversation_id or ""))
+
+
+def _grindr_authed(method: str, path: str, body: dict | None = None, *, raw: bytes | None = None, content_type: str | None = None) -> tuple[int, bytes]:
+    if not _grindr_in():
+        raise ApiError(401, "Sign in to Grindr.")
+    _refresh_grindr()
+    status, payload = _grindr_call(
+        method, path, body, session_id=_grindr["session_id"], raw=raw, content_type=content_type
+    )
+    if status == 401:
+        _refresh_grindr()
+        status, payload = _grindr_call(
+            method, path, body, session_id=_grindr["session_id"], raw=raw, content_type=content_type
+        )
+    return status, payload
+
+
+def _send_grindr_image(conversation_id: str, user_id: str, media_id: int) -> dict:
+    if not isinstance(media_id, int) or isinstance(media_id, bool) or media_id <= 0:
+        raise ApiError(400, "Unknown photo.")
+    other = _grindr_other_id(user_id, conversation_id)
+    if not other.isdigit():
+        raise ApiError(400, "Unknown profile.")
+    body = {
+        "type": "Image",
+        "target": {"type": "Direct", "targetId": int(other)},
+        "body": {"mediaId": media_id},
+    }
+    status, payload = _grindr_authed("POST", "/v4/chat/message/send", body)
+    if status == 403:
+        raise ApiError(403, "Grindr will not deliver a message to that profile.")
+    if status not in (200, 201):
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        data = {}
+    cid = data.get("conversationId") if isinstance(data, dict) else None
+    if not isinstance(cid, str) or not GRINDR_CONVO_RE.match(cid):
+        me_id = str((_grindr or {}).get("profile_id") or "")
+        if me_id.isdigit():
+            low, high = sorted((int(me_id), int(other)))
+            cid = f"{low}:{high}"
+        else:
+            cid = conversation_id
+    return {"ok": True, "conversationId": cid, "source": "grindr"}
+
+
+def _upload_grindr_chat_photo(data: bytes, content_type: str) -> int:
+    status, payload = _grindr_authed(
+        "POST",
+        "/v5/chat/media/upload?takenOnGrindr=false",
+        raw=data,
+        content_type=content_type,
+    )
+    if status != 200:
+        raise ApiError(status if status else 502, _grindr_error(payload, status) if payload else "Photo upload was not accepted.")
+    try:
+        meta = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ApiError(502, "Photo upload was not accepted.") from exc
+    media_id = meta.get("mediaId") if isinstance(meta, dict) else None
+    if isinstance(media_id, bool) or not isinstance(media_id, int) or media_id <= 0:
+        raise ApiError(502, "Photo upload was not accepted.")
+    put_status, _put_payload = _grindr_authed("PUT", f"/v4/chat/media/drawer/{media_id}")
+    if put_status not in (200, 201, 204, 500):
+        pass
+    clean = _grindr_cdn_url(meta.get("url") if isinstance(meta, dict) else None)
+    if clean:
+        _grindr_drawer[media_id] = clean
+    return media_id
+
+
+def _load_grindr_drawer() -> None:
+    status, payload = _grindr_authed("GET", "/v4/chat/media/drawer")
+    if status != 200:
+        return
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return
+    items = data if isinstance(data, list) else None
+    if items is None and isinstance(data, dict):
+        for value in data.values():
+            if isinstance(value, list):
+                items = value
+                break
+    if not isinstance(items, list):
+        return
+    found: dict[int, str] = {}
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        media_id = raw.get("id")
+        if isinstance(media_id, str) and media_id.isdigit():
+            media_id = int(media_id)
+        clean = _grindr_cdn_url(raw.get("url"))
+        if isinstance(media_id, bool) or not isinstance(media_id, int) or media_id <= 0 or not clean:
+            continue
+        ctype = str(raw.get("contentType") or "").split(";", 1)[0].strip().lower()
+        if ctype.startswith("video/") or ctype.startswith("audio/"):
+            continue
+        if ctype and not ctype.startswith("image/"):
+            continue
+        if not ctype:
+            path = urllib.parse.urlparse(clean).path.lower()
+            if not path.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
+                continue
+        found[media_id] = clean
+    _grindr_drawer.clear()
+    _grindr_drawer.update(found)
+
+
+def _positive_media_id(value: object) -> int | None:
+    # Drawer ids are 64-bit. The page sends them as strings so JavaScript
+    # does not round them. A plain JSON number is still accepted.
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str) and value.isdigit():
+        parsed = int(value)
+    else:
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _grindr_drawer_photos() -> list[dict]:
+    try:
+        _load_grindr_drawer()
+    except ApiError:
+        return []
+    photos = []
+    for media_id, url in _grindr_drawer.items():
+        image = _remember_grindr_file(url)
+        if image:
+            photos.append({"id": str(media_id), "image": image})
+    return photos
+
+
+def _grindr_drawer_bytes(media_id: int) -> tuple[bytes, str]:
+    url = _grindr_drawer.get(media_id)
+    if not url:
+        _load_grindr_drawer()
+        url = _grindr_drawer.get(media_id)
+    if not url:
+        raise ApiError(400, "Unknown photo.")
+    return _fetch_image(url, redirects=False)
+
+
+def react_to_message(conversation_id: str, user_id: str, message_id: str, reaction: str) -> dict:
+    reaction = reaction.strip().lower()
+    if _is_grindr_chat(conversation_id, user_id):
+        if reaction != "fire":
+            raise ApiError(400, "Grindr reactions use fire.")
+        if not GRINDR_CONVO_RE.match(conversation_id):
+            raise ApiError(400, "Open the chat before reacting.")
+        if not GRINDR_MESSAGE_RE.match(message_id):
+            raise ApiError(400, "Unknown message.")
+        status, payload = _grindr_authed(
+            "POST",
+            "/v4/chat/message/reaction",
+            {"conversationId": conversation_id, "messageId": message_id, "reactionType": 1},
+        )
+        if status == 500:
+            raise ApiError(404, "That message is not in the chat.")
+        if status not in (200, 201, 204):
+            raise ApiError(status if status else 502, _grindr_error(payload, status))
+        return {"ok": True}
+    if conversation_id not in _known_partners or _known_partners[conversation_id] != user_id:
+        raise ApiError(400, "That conversation is not in your inbox.")
+    if not USER_ID_RE.match(message_id):
+        raise ApiError(400, "Unknown message.")
+    if not USER_ID_RE.match(user_id):
+        raise ApiError(400, "Unknown profile.")
+    body = {
+        "conversationId": conversation_id,
+        "conversationLocation": None,
+        "messageId": message_id,
+        "userIdTo": user_id,
+    }
+    if reaction in ("", "remove"):
+        path = "/api/message/reaction/remove"
+    elif reaction in SNIFFIES_REACTIONS:
+        path = "/api/message/reaction/add"
+        body["reaction"] = reaction
+    else:
+        raise ApiError(400, "Unknown reaction.")
+    status, payload, _ctype = api("POST", path, body)
+    if status not in (200, 201, 204):
+        raise ApiError(status, _error_message(payload, status))
+    return {"ok": True}
+
+
 def send_reply(conversation_id: str, user_id: str, text: str) -> dict:
+    if user_id.startswith("g:") or GRINDR_CONVO_RE.match(conversation_id or ""):
+        return send_grindr_reply(conversation_id, user_id, text)
     text = text.strip()
     if not text:
         raise ApiError(400, "Message is empty.")
@@ -1297,16 +2836,20 @@ def send_reply(conversation_id: str, user_id: str, text: str) -> dict:
 
 
 def _ensure_location() -> list[float]:
-    if _own_loc and len(_own_loc) >= 2:
-        return [float(_own_loc[0]), float(_own_loc[1])]
+    point = _sniffies_coords()
+    if point:
+        lat, lng = point
+        return [lng, lat]
     status, payload, _ctype = api("POST", "/api/authenticate/current", {})
     if status != 200:
         raise ApiError(status, _error_message(payload, status))
     with _lock:
         _remember_account(payload)
-    if not _own_loc:
+    point = _sniffies_coords()
+    if not point:
         raise ApiError(502, "Your profile has no location yet.")
-    return [float(_own_loc[0]), float(_own_loc[1])]
+    lat, lng = point
+    return [lng, lat]
 
 
 def _load_global_raw() -> list[dict]:
@@ -1649,15 +3192,57 @@ def send_saved_community_photo(filename: str, caption: str) -> dict:
 
 
 def fetch_photos() -> dict:
-    if not _chat_photos:
-        status, payload, _ctype = api("POST", "/api/authenticate/current", {})
-        if status == 200:
-            with _lock:
-                _remember_account(payload)
-    return {"me": me(), "photos": list(_chat_photos)}
+    photos: list[str] = []
+    owner = ""
+    if _sniffies_in():
+        if not _chat_photos:
+            status, payload, _ctype = api("POST", "/api/authenticate/current", {})
+            if status == 200:
+                with _lock:
+                    _remember_account(payload)
+        try:
+            owner = me()
+        except ApiError:
+            owner = ""
+        photos = list(_chat_photos)
+    grindr = _grindr_drawer_photos() if _grindr_in() else []
+    return {"me": owner, "photos": photos, "grindr": grindr}
+
+
+def send_chosen_photo(conversation_id: str, user_id: str, filename: str, media_id: object) -> dict:
+    chosen = _positive_media_id(media_id)
+    if _is_grindr_chat(conversation_id, user_id):
+        if chosen is not None:
+            return _send_grindr_image(conversation_id, user_id, chosen)
+        if not FILE_RE.match(filename) or filename not in _chat_photos:
+            raise ApiError(400, "Unknown photo.")
+        data, content_type = fetch_media("chat", me(), filename)
+        uploaded = _upload_grindr_chat_photo(data, content_type)
+        return _send_grindr_image(conversation_id, user_id, uploaded)
+    if chosen is not None:
+        data, content_type = _grindr_drawer_bytes(chosen)
+        return send_chat_photo(conversation_id, user_id, data, content_type)
+    return send_saved_photo(conversation_id, user_id, filename)
 
 
 def fetch_profile(user_id: str) -> dict:
+    if user_id.startswith("g:"):
+        cached = _grid_cache.get("payload") if isinstance(_grid_cache.get("payload"), dict) else None
+        for card in (cached or {}).get("cards") or []:
+            if isinstance(card, dict) and card.get("id") == user_id:
+                photo = card.get("photo")
+                return {
+                    "id": user_id,
+                    "age": card.get("age"),
+                    "distance": card.get("distance"),
+                    "online": bool(card.get("online")),
+                    "photo": photo,
+                    "photos": [photo] if photo else [],
+                    "name": card.get("name") or "",
+                    "blurb": "",
+                    "source": "grindr",
+                }
+        raise ApiError(404, "Open that profile from the grid again.")
     if not USER_ID_RE.match(user_id):
         raise ApiError(400, "Unknown profile.")
     status, payload, _ctype = api("POST", "/api/user/full", {"userId": user_id})
@@ -1693,6 +3278,29 @@ def fetch_profile(user_id: str) -> dict:
                 distance = card.get("distance")
                 break
     photos = _sfw_photos(profile.get("images") or [])
+    loc = profile.get("location") if isinstance(profile.get("location"), dict) else {}
+    if not loc and isinstance(person.get("location"), dict):
+        loc = person["location"]
+    city = str(
+        loc.get("name") if isinstance(loc.get("name"), str) else
+        (loc.get("city") if isinstance(loc.get("city"), str) else
+         (profile.get("locationName") if isinstance(profile.get("locationName"), str) else
+          (person.get("locationName") if isinstance(person.get("locationName"), str) else
+           (person.get("city") if isinstance(person.get("city"), str) else ""))))
+    ).strip()
+    borough = str(
+        loc.get("borough") if isinstance(loc.get("borough"), str) else
+        (loc.get("neighbourhood") if isinstance(loc.get("neighbourhood"), str) else
+         (profile.get("borough") if isinstance(profile.get("borough"), str) else
+          (person.get("borough") if isinstance(person.get("borough"), str) else "")))
+    ).strip()
+    location_label = ""
+    if borough and city:
+        location_label = f"{borough}, {city}"
+    elif city:
+        location_label = city
+    elif borough:
+        location_label = borough
     return {
         "id": user_id,
         "age": age,
@@ -1702,9 +3310,26 @@ def fetch_profile(user_id: str) -> dict:
         "blurb": blurb,
         "conversationId": conversation_id,
         "distance": distance,
+        "city": city,
+        "borough": borough,
+        "locationLabel": location_label,
         "source": "sniffies",
     }
 
+
+def fetch_profiles_batch(user_ids: list[str]) -> dict:
+    out: dict[str, dict] = {}
+    seen: set[str] = set()
+    for raw in user_ids[:50]:
+        uid = str(raw or "").strip()
+        if not uid or uid in seen:
+            continue
+        seen.add(uid)
+        try:
+            out[uid] = fetch_profile(uid)
+        except ApiError as exc:
+            out[uid] = {"id": uid, "error": exc.message}
+    return {"profiles": out}
 
 def _error_message(payload: bytes, status: int) -> str:
     try:
@@ -1719,6 +3344,397 @@ def _error_message(payload: bytes, status: int) -> str:
     if status == 401 or status == 403:
         return "Session expired. Log in again."
     return f"Sniffies returned {status}."
+
+
+# ---------------------------------------------------------------------------
+# Me / profile editing
+# ---------------------------------------------------------------------------
+
+# Editable fields shared between GET and PUT /v3.1/me/profile.
+_GRINDR_EDITABLE = {
+    "displayName",
+    "aboutMe",
+    "age",
+    "showAge",
+    "showDistance",
+    "showPosition",
+    "showTribes",
+    "approximateDistance",
+    "showOnMap",
+    "nsfw",
+    "bodyType",
+    "ethnicity",
+    "hivStatus",
+    "lastTestedDate",
+    "relationshipStatus",
+    "sexualPosition",
+    "height",
+    "weight",
+    "genders",
+    "pronouns",
+    "grindrTribes",
+    "tribesImInto",
+    "lookingFor",
+    "meetAt",
+    "vaccines",
+    "sexualHealth",
+    "profileTags",
+    "socialNetworks",
+}
+
+# Fields that PATCH /v4/me/profile actually applies (structured fields only).
+_GRINDR_PATCHABLE = {
+    "aboutMe",  # accepted but ignored; kept for compatibility
+    "nsfw",
+    "bodyType",
+    "displayName",  # accepted but ignored
+    "ethnicity",
+    "genders",
+    "height",
+    "hivStatus",
+    "lastTestedDate",
+    "lookingFor",
+    "meetAt",
+    "grindrTribes",
+    "profileTags",
+    "pronouns",
+    "relationshipStatus",
+    "sexualHealth",
+    "sexualPosition",
+    "showAge",
+    "showDistance",
+    "showPosition",
+    "showTribes",
+    "socialNetworks",
+    "tribesImInto",
+    "vaccines",
+    "weight",
+}
+
+
+def _normalize_grindr_profile(person: dict) -> dict:
+    traits = _grindr_traits(person)
+    social = person.get("socialNetworks") if isinstance(person.get("socialNetworks"), dict) else {}
+    return {
+        "profileId": person.get("profileId"),
+        "displayName": person.get("displayName"),
+        "aboutMe": person.get("aboutMe"),
+        "age": person.get("age"),
+        "showAge": bool(person.get("showAge")),
+        "showDistance": bool(person.get("showDistance")),
+        "showPosition": bool(person.get("showPosition")),
+        "showTribes": bool(person.get("showTribes")),
+        "approximateDistance": bool(person.get("approximateDistance")),
+        "showOnMap": bool(person.get("showOnMap")),
+        "nsfw": person.get("nsfw"),
+        "bodyType": person.get("bodyType"),
+        "ethnicity": person.get("ethnicity"),
+        "hivStatus": person.get("hivStatus"),
+        "lastTestedDate": person.get("lastTestedDate"),
+        "relationshipStatus": person.get("relationshipStatus"),
+        "sexualPosition": person.get("sexualPosition"),
+        "height": person.get("height"),
+        "weight": person.get("weight"),
+        "weightKg": traits.get("weightKg"),
+        "genders": list(person.get("genders") or []),
+        "pronouns": list(person.get("pronouns") or []),
+        "grindrTribes": list(person.get("grindrTribes") or person.get("tribes") or []),
+        "tribesImInto": list(person.get("tribesImInto") or []),
+        "lookingFor": list(person.get("lookingFor") or []),
+        "meetAt": list(person.get("meetAt") or []),
+        "vaccines": list(person.get("vaccines") or []),
+        "sexualHealth": list(person.get("sexualHealth") or []),
+        "profileTags": list(person.get("profileTags") or []),
+        "socialNetworks": {
+            "twitter": {"userId": (social.get("twitter") or {}).get("userId")},
+            "facebook": {"userId": (social.get("facebook") or {}).get("userId")},
+            "instagram": {"userId": (social.get("instagram") or {}).get("userId")},
+        },
+        "traits": traits,
+    }
+
+
+def fetch_grindr_me_profile() -> dict:
+    if not _grindr_in():
+        raise ApiError(401, "Sign in to Grindr.")
+    status, payload = _grindr_authed("GET", "/v4/me/profile")
+    if status != 200:
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ApiError(502, "Grindr returned an unreadable profile.") from exc
+    if not isinstance(data, dict):
+        raise ApiError(502, "Grindr returned an unreadable profile.")
+    profiles = data.get("profiles")
+    if not isinstance(profiles, list) or not profiles:
+        raise ApiError(502, "Grindr returned an unreadable profile.")
+    person = profiles[0]
+    if not isinstance(person, dict):
+        raise ApiError(502, "Grindr returned an unreadable profile.")
+    me_id = str((_grindr or {}).get("profile_id") or "")
+    return {
+        "ok": True,
+        "source": "grindr",
+        "profileId": me_id,
+        "profile": _normalize_grindr_profile(person),
+    }
+
+
+def _grindr_banned_terms_message(payload: bytes) -> str | None:
+    try:
+        data = json.loads(payload)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("type") != "urn:gr:err:hit_banned_terms":
+        return None
+    fields = []
+    for key in ("display_name", "about_me", "gender_display", "pronouns_display"):
+        block = data.get(key)
+        if isinstance(block, dict) and isinstance(block.get("terms"), list):
+            terms = [str(t) for t in block["terms"]]
+            if terms:
+                fields.append(f"{key}: {', '.join(terms)}")
+    if fields:
+        return "Profile text was blocked: " + "; ".join(fields)
+    return "Profile text was blocked."
+
+
+def patch_grindr_profile(patch: dict) -> dict:
+    if not _grindr_in():
+        raise ApiError(401, "Sign in to Grindr.")
+    cleaned = {k: v for k, v in patch.items() if k in _GRINDR_PATCHABLE}
+    if not cleaned:
+        raise ApiError(400, "Nothing to update.")
+    status, payload = _grindr_authed("PATCH", "/v4/me/profile", cleaned)
+    if status == 400:
+        banned = _grindr_banned_terms_message(payload)
+        if banned:
+            raise ApiError(400, banned)
+    if status not in (200, 201, 204):
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    return {"ok": True}
+
+
+def _merge_grindr_full_profile(person: dict, patch: dict) -> dict:
+    full: dict = {k: person.get(k) for k in _GRINDR_EDITABLE if k in person}
+    # Ensure structured array fields exist as arrays when the source omits them,
+    # so the replacement body is complete.
+    for key in ("genders", "pronouns", "grindrTribes", "tribesImInto", "lookingFor",
+                "meetAt", "vaccines", "sexualHealth", "profileTags"):
+        if key not in full or full[key] is None:
+            full[key] = []
+    if "socialNetworks" not in full or not isinstance(full.get("socialNetworks"), dict):
+        full["socialNetworks"] = {}
+    for net in ("twitter", "facebook", "instagram"):
+        if not isinstance(full["socialNetworks"].get(net), dict):
+            full["socialNetworks"][net] = {}
+
+    for key, value in patch.items():
+        if key == "weightKg":
+            if value is None:
+                full["weight"] = None
+            else:
+                num = _bounded_number(value, 40, 320)
+                if num is None:
+                    raise ApiError(400, "Weight looks wrong.")
+                full["weight"] = int(round(num * 1000))
+        elif key in _GRINDR_EDITABLE:
+            full[key] = value
+
+    # Prune empty strings to null for moderated free-text fields.
+    for key in ("displayName", "aboutMe"):
+        if full.get(key) == "":
+            full[key] = None
+        if full.get(key) is not None:
+            full[key] = str(full[key])[:200]
+
+    # Age is server-derived; never let the client change it.
+    if "age" in person:
+        full["age"] = person["age"]
+
+    return full
+
+
+def update_grindr_profile_full(patch: dict) -> dict:
+    if not _grindr_in():
+        raise ApiError(401, "Sign in to Grindr.")
+    # We need the current profile to fill in every required field.
+    status, payload = _grindr_authed("GET", "/v4/me/profile")
+    if status != 200:
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ApiError(502, "Grindr returned an unreadable profile.") from exc
+    profiles = data.get("profiles") if isinstance(data, dict) else None
+    person = profiles[0] if isinstance(profiles, list) and profiles else None
+    if not isinstance(person, dict):
+        raise ApiError(502, "Grindr returned an unreadable profile.")
+    full = _merge_grindr_full_profile(person, patch)
+    status, payload = _grindr_authed("PUT", "/v3.1/me/profile", full)
+    if status == 400:
+        banned = _grindr_banned_terms_message(payload)
+        if banned:
+            raise ApiError(400, banned)
+    if status not in (200, 201, 204):
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    return {"ok": True}
+
+
+def _profile_thumb_coords(data: bytes) -> str:
+    try:
+        from PIL import Image
+    except Exception as exc:
+        raise ApiError(500, "Photo processing is unavailable. Install Pillow.") from exc
+    img = Image.open(io.BytesIO(data))
+    w, h = img.size
+    side = min(w, h)
+    x1 = (w - side) / 2
+    y1 = (h - side) / 2
+    x2 = x1 + side
+    y2 = y1 + side
+    return f"{y2:.1f},{x1:.1f},{x2:.1f},{y1:.1f}"
+
+
+def upload_grindr_profile_photo(data: bytes, content_type: str, taken_on_grindr: bool = False) -> dict:
+    if not _grindr_in():
+        raise ApiError(401, "Sign in to Grindr.")
+    content_type = _image_type(data, content_type)
+    coords = _profile_thumb_coords(data)
+    query = {
+        "thumbCoords": coords,
+        "takenOnGrindr": "true",
+    }
+    path = "/v4/media/upload?" + urllib.parse.urlencode(query)
+    status, payload = _grindr_authed("POST", path, raw=data, content_type=content_type)
+    if status != 200:
+        print(f"[DEBUG] profile upload {status}: {payload.decode(errors='replace')[:800]}", flush=True)
+        raise ApiError(status if status else 502, _grindr_error(payload, status) if payload else "Photo upload was not accepted.")
+    try:
+        meta = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ApiError(502, "Photo upload was not accepted.") from exc
+    if not isinstance(meta, dict):
+        raise ApiError(502, "Photo upload was not accepted.")
+    media_hash = None
+    sizes = meta.get("imageSizes")
+    if isinstance(sizes, list) and sizes:
+        first = sizes[0]
+        if isinstance(first, dict) and isinstance(first.get("mediaHash"), str):
+            media_hash = first["mediaHash"]
+    if not media_hash and isinstance(meta.get("hash"), str):
+        media_hash = meta["hash"]
+    if not media_hash:
+        raise ApiError(502, "Photo upload did not return a hash.")
+    return {"ok": True, "mediaHash": media_hash}
+
+
+def fetch_grindr_profile_images() -> dict:
+    if not _grindr_in():
+        raise ApiError(401, "Sign in to Grindr.")
+    status, payload = _grindr_authed("GET", "/v3.1/me/profile/images?selected=false")
+    if status != 200:
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ApiError(502, "Grindr returned unreadable photos.") from exc
+    if not isinstance(data, dict):
+        raise ApiError(502, "Grindr returned unreadable photos.")
+    medias = data.get("medias")
+    if not isinstance(medias, list):
+        medias = []
+    return {"ok": True, "medias": medias}
+
+
+def set_grindr_profile_images(primary_image_hash: str | None, secondary_image_hashes: list[str]) -> dict:
+    if not _grindr_in():
+        raise ApiError(401, "Sign in to Grindr.")
+    body = {
+        "primaryImageHash": primary_image_hash,
+        "secondaryImageHashes": secondary_image_hashes if secondary_image_hashes else [],
+    }
+    status, payload = _grindr_authed("PUT", "/v3/me/profile/images", body)
+    if status not in (200, 201, 204):
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    return {"ok": True}
+
+
+def delete_grindr_profile_images(media_hashes: list[str]) -> dict:
+    if not _grindr_in():
+        raise ApiError(401, "Sign in to Grindr.")
+    if not isinstance(media_hashes, list) or not media_hashes:
+        raise ApiError(400, "No photos selected.")
+    body = {"media_hashes": [str(h) for h in media_hashes]}
+    status, payload = _grindr_authed("DELETE", "/v3/me/profile/images", body)
+    if status not in (200, 201, 204):
+        raise ApiError(status if status else 502, _grindr_error(payload, status))
+    return {"ok": True}
+
+
+# Account-aware dispatchers. Sniffies editing is not implemented yet.
+
+
+def fetch_me_profile() -> dict:
+    if _grindr_in():
+        return fetch_grindr_me_profile()
+    if _sniffies_in():
+        raise ApiError(501, "Sniffies profile editing is not implemented yet.")
+    raise ApiError(401, "Log in.")
+
+
+def patch_me_profile(patch: dict) -> dict:
+    if _grindr_in():
+        return patch_grindr_profile(patch)
+    if _sniffies_in():
+        raise ApiError(501, "Sniffies profile editing is not implemented yet.")
+    raise ApiError(401, "Log in.")
+
+
+def update_me_profile(patch: dict) -> dict:
+    if _grindr_in():
+        return update_grindr_profile_full(patch)
+    if _sniffies_in():
+        raise ApiError(501, "Sniffies profile editing is not implemented yet.")
+    raise ApiError(401, "Log in.")
+
+
+def fetch_me_profile_images() -> dict:
+    if _grindr_in():
+        return fetch_grindr_profile_images()
+    if _sniffies_in():
+        raise ApiError(501, "Sniffies profile editing is not implemented yet.")
+    raise ApiError(401, "Log in.")
+
+
+def set_me_profile_images(body: dict) -> dict:
+    if _grindr_in():
+        primary = body.get("primaryImageHash")
+        secondary = body.get("secondaryImageHashes") if isinstance(body.get("secondaryImageHashes"), list) else []
+        return set_grindr_profile_images(primary, secondary)
+    if _sniffies_in():
+        raise ApiError(501, "Sniffies profile editing is not implemented yet.")
+    raise ApiError(401, "Log in.")
+
+
+def delete_me_profile_images(body: dict) -> dict:
+    if _grindr_in():
+        media_hashes = body.get("mediaHashes") if isinstance(body.get("mediaHashes"), list) else []
+        return delete_grindr_profile_images(media_hashes)
+    if _sniffies_in():
+        raise ApiError(501, "Sniffies profile editing is not implemented yet.")
+    raise ApiError(401, "Log in.")
+
+
+def upload_me_profile_photo(data: bytes, content_type: str, taken_on_grindr: bool = False) -> dict:
+    if _grindr_in():
+        return upload_grindr_profile_photo(data, content_type, taken_on_grindr)
+    if _sniffies_in():
+        raise ApiError(501, "Sniffies profile editing is not implemented yet.")
+    raise ApiError(401, "Log in.")
 
 
 DEVICE_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -2144,6 +4160,484 @@ def _match_word(text: str, words: list[str]) -> str | None:
     return None
 
 
+_AUTO_RESPONDER_DEFAULTS = {
+    "enabled": False,
+    "workerUrl": "",
+    "key": "",
+    "model": "",
+    "prompt": "",
+    "maxPerHour": 60,
+    "minGapMinutes": 2,
+    "acceptTerms": False,
+    "targetMode": "selected",
+    "targets": [],
+    "sendPhotosWhenAsked": False,
+    "autoResponderPhotos": [],
+}
+
+
+def _set_auto_responder_status(
+    error: str | None = None, ok: str | None = None, enabled: bool | None = None
+) -> None:
+    with _auto_responder_status_lock:
+        if error is not None:
+            _auto_responder_status["lastError"] = error
+        if ok is not None:
+            _auto_responder_status["lastOk"] = ok
+            _auto_responder_status["lastError"] = ""
+        if enabled is not None:
+            _auto_responder_status["enabled"] = enabled
+
+
+def load_auto_responder() -> dict:
+    data = dict(_AUTO_RESPONDER_DEFAULTS)
+    try:
+        raw = json.loads(_AUTO_RESPONDER_CONFIG.read_text())
+    except Exception:
+        return data
+    if not isinstance(raw, dict):
+        return data
+    for key in _AUTO_RESPONDER_DEFAULTS:
+        if key in raw:
+            data[key] = raw[key]
+    if data.get("targetMode") == "all":
+        data["targetMode"] = "selected"
+        _save_auto_responder(data)
+    return data
+
+
+def _save_auto_responder(cfg: dict) -> None:
+    _write_private(_AUTO_RESPONDER_CONFIG, cfg)
+
+
+def load_state_auto_responder() -> dict:
+    try:
+        raw = json.loads(_AUTO_RESPONDER_STATE.read_text())
+    except Exception:
+        return {"seeded": False, "last": {}, "replies": {}, "pending": {}, "photoLast": {}, "hourStart": 0, "hourCount": 0}
+    if not isinstance(raw, dict):
+        return {"seeded": False, "last": {}, "replies": {}, "pending": {}, "photoLast": {}, "hourStart": 0, "hourCount": 0}
+    return {
+        "seeded": bool(raw.get("seeded")),
+        "last": raw.get("last") if isinstance(raw.get("last"), dict) else {},
+        "replies": raw.get("replies") if isinstance(raw.get("replies"), dict) else {},
+        "pending": raw.get("pending") if isinstance(raw.get("pending"), dict) else {},
+        "photoLast": raw.get("photoLast") if isinstance(raw.get("photoLast"), dict) else {},
+        "hourStart": raw.get("hourStart") or 0,
+        "hourCount": raw.get("hourCount") or 0,
+    }
+
+
+def _save_state_auto_responder(state: dict) -> None:
+    clean = {
+        "seeded": bool(state.get("seeded")),
+        "last": state.get("last") or {},
+        "replies": state.get("replies") or {},
+        "pending": state.get("pending") or {},
+        "photoLast": state.get("photoLast") or {},
+        "hourStart": state.get("hourStart") or 0,
+        "hourCount": state.get("hourCount") or 0,
+    }
+    _write_private(_AUTO_RESPONDER_STATE, clean)
+
+
+def auto_responder_public() -> dict:
+    cfg = load_auto_responder()
+    state = load_state_auto_responder()
+    with _auto_responder_status_lock:
+        status = dict(_auto_responder_status)
+    enabled = bool(
+        cfg.get("enabled")
+        and cfg.get("workerUrl")
+        and cfg.get("key")
+        and cfg.get("acceptTerms")
+    )
+    return {
+        "enabled": enabled,
+        "workerUrl": str(cfg.get("workerUrl") or ""),
+        "model": str(cfg.get("model") or ""),
+        "prompt": str(cfg.get("prompt") or ""),
+        "maxPerHour": int(cfg.get("maxPerHour") or 60),
+        "minGapMinutes": int(cfg.get("minGapMinutes") or 2),
+        "acceptTerms": bool(cfg.get("acceptTerms")),
+        "targetMode": str(cfg.get("targetMode") or "all"),
+        "targets": list(cfg.get("targets") or []),
+        "sendPhotosWhenAsked": bool(cfg.get("sendPhotosWhenAsked")),
+        "autoResponderPhotos": list(cfg.get("autoResponderPhotos") or []),
+        "seeded": bool(state.get("seeded")),
+        "lastError": status.get("lastError", ""),
+        "lastOk": status.get("lastOk", ""),
+    }
+
+
+def update_auto_responder(body: dict) -> dict:
+    cfg = load_auto_responder()
+    if "enabled" in body:
+        cfg["enabled"] = bool(body.get("enabled"))
+    if "targetMode" in body:
+        mode = str(body.get("targetMode") or "all")
+        if mode not in ("all", "selected"):
+            mode = "all"
+        cfg["targetMode"] = mode
+    if "targets" in body:
+        targets_raw = body.get("targets")
+        if isinstance(targets_raw, list):
+            targets = []
+            for t in targets_raw:
+                tid = str(t or "").strip()
+                if USER_ID_RE.match(tid):
+                    targets.append(tid)
+            cfg["targets"] = targets[:200]
+        else:
+            cfg["targets"] = []
+    if "sendPhotosWhenAsked" in body:
+        cfg["sendPhotosWhenAsked"] = bool(body.get("sendPhotosWhenAsked"))
+    if cfg.get("targetMode") == "all":
+        cfg["targetMode"] = "selected"
+    if "workerUrl" in body:
+        url = str(body.get("workerUrl") or "").strip()
+        if url and not url.startswith(("http://", "https://")):
+            raise ApiError(400, "Worker URL must start with http:// or https://.")
+        if len(url) > 500:
+            raise ApiError(400, "Worker URL is too long.")
+        cfg["workerUrl"] = url
+    if "key" in body:
+        key = str(body.get("key") or "").strip()
+        if key:
+            if len(key) < 8:
+                raise ApiError(400, "Worker key must be at least 8 characters.")
+            if len(key) > 500:
+                raise ApiError(400, "Worker key is too long.")
+            cfg["key"] = key
+    if "model" in body:
+        model = str(body.get("model") or "").strip()
+        if model and len(model) > 120:
+            raise ApiError(400, "Model name is too long.")
+        cfg["model"] = model
+    if "prompt" in body:
+        prompt = str(body.get("prompt") or "").strip()
+        if len(prompt) > 4000:
+            raise ApiError(400, "Prompt is too long.")
+        cfg["prompt"] = prompt
+    if "maxPerHour" in body:
+        try:
+            cfg["maxPerHour"] = max(1, min(600, int(body.get("maxPerHour"))))
+        except (TypeError, ValueError):
+            cfg["maxPerHour"] = 60
+    if "minGapMinutes" in body:
+        try:
+            cfg["minGapMinutes"] = max(0, min(1440, int(body.get("minGapMinutes"))))
+        except (TypeError, ValueError):
+            cfg["minGapMinutes"] = 2
+    if "acceptTerms" in body:
+        cfg["acceptTerms"] = bool(body.get("acceptTerms"))
+
+    effective_enabled = bool(
+        cfg.get("enabled")
+        and cfg.get("workerUrl")
+        and cfg.get("key")
+        and cfg.get("acceptTerms")
+    )
+    if not effective_enabled:
+        _auto_responder_disable()
+    _save_auto_responder(cfg)
+    _set_auto_responder_status(error="")
+    if effective_enabled:
+        _auto_responder_wake.set()
+    return auto_responder_public()
+
+
+def update_auto_responder_target(conversation_id: str, enabled: bool) -> dict:
+    cid = str(conversation_id or "").strip()
+    if not USER_ID_RE.match(cid):
+        raise ApiError(400, "Invalid conversation.")
+    cfg = load_auto_responder()
+    targets = set(cfg.get("targets") or [])
+    if enabled:
+        targets.add(cid)
+    else:
+        targets.discard(cid)
+    cfg["targets"] = sorted(targets)[:200]
+    cfg["targetMode"] = "selected"
+    _save_auto_responder(cfg)
+    state = load_state_auto_responder()
+    if enabled:
+        state["last"].pop(cid, None)
+    state["pending"].pop(cid, None)
+    _save_state_auto_responder(state)
+    _set_auto_responder_status(error="")
+    if bool(cfg.get("enabled") and cfg.get("workerUrl") and cfg.get("key") and cfg.get("acceptTerms")):
+        _auto_responder_wake.set()
+    return auto_responder_public()
+
+
+def _prepare_thread_messages(thread: dict) -> list[dict]:
+    out = []
+    for raw in (thread.get("messages") or [])[-12:]:
+        if not isinstance(raw, dict):
+            continue
+        body = raw.get("body")
+        text = body if isinstance(body, str) and body else ""
+        if not text and raw.get("file"):
+            text = "[sent a photo]"
+        if not text:
+            continue
+        role = "assistant" if raw.get("mine") else "user"
+        out.append({"role": role, "content": text})
+    return out
+
+
+_PHOTO_REQUEST_RE = re.compile(
+    r"\b(pic|pics|pix|photo|photos|picture|pictures|nude|nudes|face|body|dick|cock|ass|booty|hole|feet)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_photo_request(text: str) -> bool:
+    if not isinstance(text, str) or not text.strip():
+        return False
+    lower = text.lower()
+    if _PHOTO_REQUEST_RE.search(lower):
+        return True
+    ask_words = ("send", "show", "trade", "swap", "more", "got", "have", "share", "give")
+    if any(w in lower for w in ask_words) and re.search(
+        r"\b(pic|pics|pix|photo|photos|picture|pictures|nude|nudes)\b", lower
+    ):
+        return True
+    return False
+
+
+def _pick_photo(pool: list[str], last: str | None) -> str:
+    if len(pool) == 1:
+        return pool[0]
+    candidates = [p for p in pool if p != last]
+    if not candidates:
+        candidates = pool
+    return secrets.choice(candidates)
+
+
+def delete_auto_responder_photo(filename: str) -> dict:
+    cfg = load_auto_responder()
+    photos = list(cfg.get("autoResponderPhotos") or [])
+    safe = Path(filename).name
+    if safe not in photos:
+        raise ApiError(404, "Photo not in pool.")
+    photos.remove(safe)
+    cfg["autoResponderPhotos"] = photos
+    _save_auto_responder(cfg)
+    return {"ok": True, "photos": photos}
+
+
+def _call_ai_worker(cfg: dict, messages: list[dict]) -> str:
+    url = str(cfg.get("workerUrl") or "").rstrip("/") + "/respond"
+    key = str(cfg.get("key") or "")
+    payload: dict = {"messages": messages}
+    model = str(cfg.get("model") or "").strip()
+    if model:
+        payload["model"] = model
+    prompt = str(cfg.get("prompt") or "").strip()
+    if prompt:
+        payload["prompt"] = prompt
+    data = json.dumps(payload).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "sniffies-messages/1.0",
+        "Authorization": "Bearer " + key,
+    }
+    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with _direct_opener.open(request, timeout=30) as response:
+            raw = response.read(32000)
+            status = getattr(response, "status", 200)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read(4000)
+        status = exc.code
+    except Exception:
+        raise ApiError(502, "Could not reach the AI worker.")
+    if status != 200:
+        try:
+            parsed = json.loads(raw.decode() or "{}")
+            msg = parsed.get("error") if isinstance(parsed, dict) else None
+        except Exception:
+            msg = None
+        raise ApiError(status if 400 <= status <= 599 else 502, msg or "AI worker returned an error.")
+    try:
+        parsed = json.loads(raw.decode() or "{}")
+    except Exception:
+        raise ApiError(502, "AI worker returned unreadable JSON.")
+    if not isinstance(parsed, dict):
+        raise ApiError(502, "AI worker returned an unexpected response.")
+    reply = parsed.get("reply")
+    if not isinstance(reply, str) or not reply.strip():
+        raise ApiError(502, "AI worker returned an empty reply.")
+    return reply.strip()[:2000]
+
+
+def auto_responder_test() -> dict:
+    cfg = load_auto_responder()
+    if not cfg.get("workerUrl") or not cfg.get("key"):
+        raise ApiError(400, "Add the Worker URL and key first.")
+    sample = [
+        {"role": "user", "content": "hey, what are you into?"},
+    ]
+    reply = _call_ai_worker(cfg, sample)
+    return {"draft": reply}
+
+
+def _auto_responder_once() -> None:
+    cfg = load_auto_responder()
+    enabled = bool(
+        cfg.get("enabled")
+        and cfg.get("workerUrl")
+        and cfg.get("key")
+        and cfg.get("acceptTerms")
+    )
+    _set_auto_responder_status(enabled=enabled)
+    if not enabled:
+        return
+    if not _sniffies_in():
+        return
+    try:
+        chats = fetch_chats()
+    except ApiError as exc:
+        _set_auto_responder_status(error=exc.message)
+        raise
+    conversations = chats.get("conversations") or []
+    state = load_state_auto_responder()
+    if not state.get("seeded"):
+        for conv in conversations:
+            cid = str(conv.get("conversationId") or "")
+            if cid:
+                state["last"][cid] = str(conv.get("lastAt") or "")
+        state["seeded"] = True
+        state["hourStart"] = time.time()
+        _save_state_auto_responder(state)
+        _set_auto_responder_status(ok="Watching. First check recorded existing chats.")
+        print("auto-responder seeded")
+        return
+
+    now = time.time()
+    if now - (state.get("hourStart") or 0) > 3600:
+        state["hourCount"] = 0
+        state["hourStart"] = now
+
+    max_per_hour = max(1, int(cfg.get("maxPerHour") or 60))
+    min_gap = max(0, int(cfg.get("minGapMinutes") or 2)) * 60
+    sent = 0
+
+    # Sort by recency so the newest unread threads are handled first.
+    sorted_conversations = sorted(
+        conversations,
+        key=lambda c: c.get("lastAt") or "",
+        reverse=True,
+    )
+
+    target_mode = str(cfg.get("targetMode") or "all")
+    targets = set(cfg.get("targets") or [])
+    pending = state.get("pending") or {}
+    pending_was_empty = not pending
+    new_pending = False
+
+    for conv in sorted_conversations:
+        cid = str(conv.get("conversationId") or "")
+        user_id = str(conv.get("userId") or "")
+        if not cid or not user_id or user_id.startswith("g:") or GRINDR_CONVO_RE.match(cid):
+            continue
+        if target_mode == "selected" and cid not in targets:
+            continue
+        last_at = str(conv.get("lastAt") or "")
+        prev = state["last"].get(cid) or ""
+        is_new = _newer(last_at, prev)
+        if is_new:
+            state["last"][cid] = last_at
+            if bool(conv.get("mine")):
+                pending.pop(cid, None)
+                continue
+            if cid not in pending:
+                pending[cid] = now
+                new_pending = True
+            continue
+        if cid not in pending:
+            continue
+        if now - float(pending[cid]) < 15:
+            continue
+        del pending[cid]
+        if bool(conv.get("mine")):
+            continue
+        last_reply_at = state["replies"].get(cid)
+        if isinstance(last_reply_at, (int, float)) and now - float(last_reply_at) < min_gap:
+            continue
+        if int(state.get("hourCount") or 0) >= max_per_hour:
+            continue
+        try:
+            thread = fetch_thread(cid, None)
+        except ApiError as exc:
+            print(f"auto-responder could not fetch thread {cid}: {exc.message}")
+            continue
+        messages = _prepare_thread_messages(thread)
+        if not messages or messages[-1].get("role") != "user":
+            continue
+        last_text = messages[-1].get("content") or ""
+        photo_pool = list(cfg.get("autoResponderPhotos") or [])
+        if cfg.get("sendPhotosWhenAsked") and photo_pool and _is_photo_request(last_text):
+            photo_last = state.get("photoLast") or {}
+            chosen = _pick_photo(photo_pool, photo_last.get(cid))
+            try:
+                send_saved_photo(cid, user_id, chosen)
+                photo_last[cid] = chosen
+                state["photoLast"] = photo_last
+                state["replies"][cid] = now
+                state["hourCount"] = int(state.get("hourCount") or 0) + 1
+                sent += 1
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                _set_auto_responder_status(ok=f"Auto-sent photo at {ts}.")
+                continue
+            except ApiError as exc:
+                _set_auto_responder_status(error=f"Photo send failed: {exc.message}")
+                print(f"auto-responder photo send failed for {cid}: {exc.message}")
+                continue
+        try:
+            reply = _call_ai_worker(cfg, messages)
+        except ApiError as exc:
+            _set_auto_responder_status(error=f"AI worker: {exc.message}")
+            print(f"auto-responder AI failed: {exc.message}")
+            continue
+        try:
+            send_reply(cid, user_id, reply)
+        except ApiError as exc:
+            _set_auto_responder_status(error=f"Send failed: {exc.message}")
+            print(f"auto-responder send failed for {cid}: {exc.message}")
+            continue
+        state["replies"][cid] = now
+        state["hourCount"] = int(state.get("hourCount") or 0) + 1
+        sent += 1
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        _set_auto_responder_status(ok=f"Auto-replied at {ts}.")
+
+    if new_pending and pending_was_empty:
+        _auto_responder_schedule_wake(15)
+    _save_state_auto_responder(state)
+    if sent:
+        print(f"auto-responder sent {sent} replies")
+
+
+def _auto_responder_watcher() -> None:
+    while not _auto_responder_stop.is_set():
+        _auto_responder_wake.wait(AUTO_RESPONDER_POLL_SECONDS)
+        _auto_responder_wake.clear()
+        if _auto_responder_stop.is_set():
+            return
+        try:
+            _auto_responder_once()
+        except ApiError as exc:
+            _set_auto_responder_status(error=exc.message)
+            print(f"auto-responder check failed: {exc.message}")
+        except Exception:
+            _set_auto_responder_status(error="Could not run auto-responder check.")
+            print("auto-responder check failed")
+
+
 def _desktop_notify(title: str, body: str) -> None:
     env = os.environ.copy()
     env.setdefault("DISPLAY", ":0")
@@ -2279,9 +4773,21 @@ def fetch_media(kind: str, user_id: str, filename: str) -> tuple[bytes, str]:
     raise last_error
 
 
-def _fetch_image(url: str) -> tuple[bytes, str]:
+def _fetch_image(url: str, *, redirects: bool = True) -> tuple[bytes, str]:
     proc = subprocess.run(
-        ["curl", "--http2", "--silent", "--show-error", "--max-time", "20", "-D", "-", url],
+        [
+            "curl",
+            "--http2",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "20",
+            "--max-redirs",
+            "5" if redirects else "0",
+            "-D",
+            "-",
+            url,
+        ],
         capture_output=True,
     )
     raw = proc.stdout
@@ -2355,25 +4861,61 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/session":
                 self._json(200, session_public())
                 return
+            if path == "/api/location":
+                if not _sniffies_in() and not _grindr_in():
+                    raise ApiError(401, "Log in.")
+                self._json(200, location_public())
+                return
+            if path == "/api/geocode":
+                self._json(200, search_places((query.get("q") or [""])[0]))
+                return
+            if path == "/vendor/leaflet.js":
+                self._send(200, (STATIC / "vendor" / "leaflet.js").read_bytes(), "text/javascript; charset=utf-8")
+                return
+            if path == "/vendor/leaflet.css":
+                self._send(200, (STATIC / "vendor" / "leaflet.css").read_bytes(), "text/css; charset=utf-8")
+                return
+            if path == "/logo.png":
+                self._send(200, (STATIC / "logo.png").read_bytes(), "image/png")
+                return
+            if path == "/logo.svg":
+                self._send(200, (STATIC / "logo.svg").read_bytes(), "image/svg+xml")
+                return
             if path == "/api/grid":
                 fresh = (query.get("fresh") or ["0"])[0] == "1"
-                self._json(200, fetch_grid(fresh))
+                self._json(200, fetch_grid(fresh, _query_filters(query)))
                 return
             if path == "/api/inbox":
-                self._json(200, fetch_inbox())
+                if not _sniffies_in() and not _grindr_in():
+                    self._json(200, {"conversations": [], "me": ""})
+                else:
+                    self._json(200, fetch_chats())
+                _auto_responder_wake.set()
                 return
             if path == "/api/community":
-                self._json(200, fetch_community())
+                self._json(200, fetch_community() if _sniffies_in() else {"messages": []})
                 return
             if path == "/api/places":
                 fresh = (query.get("fresh") or ["0"])[0] == "1"
-                self._json(200, fetch_places(fresh))
+                self._json(200, fetch_places(fresh) if _sniffies_in() else {"places": []})
                 return
             if path == "/api/place":
                 self._json(200, fetch_place((query.get("placeId") or [""])[0]))
                 return
             if path == "/api/notify/settings":
                 self._json(200, notify_public())
+                return
+            if path == "/api/auto-responder/settings":
+                self._json(200, auto_responder_public())
+                return
+            if path == "/api/auto-responder/photos":
+                owner = ""
+                if _sniffies_in():
+                    try:
+                        owner = me()
+                    except ApiError:
+                        owner = ""
+                self._json(200, {"me": owner, "photos": list(load_auto_responder().get("autoResponderPhotos") or [])})
                 return
             if path == "/api/thread":
                 conversation_id = (query.get("conversationId") or [""])[0]
@@ -2385,6 +4927,28 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/profile":
                 self._json(200, fetch_profile((query.get("userId") or [""])[0]))
+                return
+            if path == "/api/profiles/batch":
+                ids = query.get("ids") or []
+                self._json(200, fetch_profiles_batch(ids))
+                return
+            if path == "/api/me/profile":
+                self._json(200, fetch_me_profile())
+                return
+            if path == "/api/me/profile/images":
+                self._json(200, fetch_me_profile_images())
+                return
+            if path.startswith("/media/gfile/"):
+                token = path[len("/media/gfile/") :]
+                url = _grindr_files.get(token) if re.fullmatch(r"[0-9a-f]{32}", token) else None
+                if not url:
+                    raise ApiError(404, "Not found.")
+                body, ctype = _fetch_image(url, redirects=False)
+                self._send(200, body, ctype)
+                return
+            if path.startswith("/media/grindr/"):
+                body, ctype = fetch_grindr_photo(urllib.parse.unquote(path[len("/media/grindr/") :]))
+                self._send(200, body, ctype)
                 return
             if path.startswith("/media/place/"):
                 body, ctype = fetch_place_media(path[len("/media/place/") :])
@@ -2406,6 +4970,41 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self._json(500, {"error": "Something went wrong loading that."})
 
+    def _post_me_profile_photo(self, parsed: urllib.parse.ParseResult) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > PHOTO_LIMIT:
+            self.close_connection = True
+            raise ApiError(413, "Photo must be under 8 MB.")
+        declared = self.headers.get("Content-Type") or ""
+        data = self.rfile.read(length)
+        if len(data) != length:
+            raise ApiError(400, "Photo upload was cut off.")
+        query = urllib.parse.parse_qs(parsed.query)
+        taken = (query.get("takenOnGrindr") or [""])[0] == "1"
+        content_type = _image_type(data, declared)
+        self._json(200, upload_me_profile_photo(data, content_type, taken))
+
+    def _post_auto_responder_photo(self) -> None:
+        if not _sniffies_in():
+            raise ApiError(401, "Log in.")
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > PHOTO_LIMIT:
+            self.close_connection = True
+            raise ApiError(413, "Photo must be under 8 MB.")
+        declared = self.headers.get("Content-Type") or ""
+        data = self.rfile.read(length)
+        if len(data) != length:
+            raise ApiError(400, "Photo upload was cut off.")
+        content_type = _image_type(data, declared)
+        filename = _upload_chat_photo(data, content_type)
+        cfg = load_auto_responder()
+        photos = list(cfg.get("autoResponderPhotos") or [])
+        if filename not in photos:
+            photos.append(filename)
+            cfg["autoResponderPhotos"] = photos
+            _save_auto_responder(cfg)
+        self._json(200, {"filename": filename})
+
     def _post_photo(self, parsed: urllib.parse.ParseResult) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0 or length > PHOTO_LIMIT:
@@ -2420,15 +5019,14 @@ class Handler(BaseHTTPRequestHandler):
             caption = (query.get("caption") or [""])[0]
             self._json(200, send_community_photo(data, declared, caption))
             return
-        self._json(
-            200,
-            send_chat_photo(
-                (query.get("conversationId") or [""])[0],
-                (query.get("userId") or [""])[0],
-                data,
-                declared,
-            ),
-        )
+        conversation_id = (query.get("conversationId") or [""])[0]
+        user_id = (query.get("userId") or [""])[0]
+        if _is_grindr_chat(conversation_id, user_id):
+            content_type = _image_type(data, declared)
+            media_id = _upload_grindr_chat_photo(data, content_type)
+            self._json(200, _send_grindr_image(conversation_id, user_id, media_id))
+            return
+        self._json(200, send_chat_photo(conversation_id, user_id, data, declared))
 
     def do_POST(self) -> None:
         try:
@@ -2436,18 +5034,39 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/photo":
                 self._post_photo(parsed)
                 return
+            if parsed.path == "/api/auto-responder/photos":
+                self._post_auto_responder_photo()
+                return
+            if parsed.path == "/api/me/profile/images":
+                self._post_me_profile_photo(parsed)
+                return
             data = self._read_json()
             if parsed.path == "/api/login":
-                self._json(200, login(str(data.get("email") or ""), str(data.get("password") or "")))
+                email = str(data.get("email") or "")
+                password = str(data.get("password") or "")
+                if str(data.get("network") or "sniffies") == "grindr":
+                    self._json(200, grindr_login(email, password))
+                else:
+                    self._json(200, login(email, password))
                 return
             if parsed.path == "/api/logout":
-                self._json(200, logout())
+                self._json(200, logout(str(data.get("network") or "both")))
                 return
             if parsed.path == "/api/inbox/more":
                 earliest = str(data.get("earliest") or "")
                 if not earliest:
                     raise ApiError(400, "Missing cursor.")
                 self._json(200, fetch_more(earliest))
+                return
+            if parsed.path == "/api/location":
+                self._json(
+                    200,
+                    set_location(
+                        str(data.get("mode") or ""),
+                        data.get("lat"),
+                        data.get("lng"),
+                    ),
+                )
                 return
             if parsed.path == "/api/reply":
                 result = send_reply(
@@ -2470,10 +5089,22 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._json(
                     200,
-                    send_saved_photo(
+                    send_chosen_photo(
                         str(data.get("conversationId") or ""),
                         str(data.get("userId") or ""),
                         filename,
+                        data.get("mediaId"),
+                    ),
+                )
+                return
+            if parsed.path == "/api/react":
+                self._json(
+                    200,
+                    react_to_message(
+                        str(data.get("conversationId") or ""),
+                        str(data.get("userId") or ""),
+                        str(data.get("messageId") or ""),
+                        str(data.get("reaction") or ""),
                     ),
                 )
                 return
@@ -2492,11 +5123,32 @@ class Handler(BaseHTTPRequestHandler):
                 notify_test()
                 self._json(200, {"ok": True})
                 return
+            if parsed.path == "/api/auto-responder/settings":
+                self._json(200, update_auto_responder(data))
+                return
+            if parsed.path == "/api/auto-responder/targets":
+                conversation_id = str(data.get("conversationId") or "").strip()
+                enabled = bool(data.get("enabled"))
+                self._json(200, update_auto_responder_target(conversation_id, enabled))
+                return
+            if parsed.path == "/api/auto-responder/test":
+                self._json(200, auto_responder_test())
+                return
+            if parsed.path == "/api/auto-responder/once":
+                _auto_responder_once()
+                self._json(200, auto_responder_public())
+                return
             if parsed.path == "/api/account/switch":
                 index = data.get("index")
                 if not isinstance(index, int):
                     raise ApiError(400, "Unknown account.")
                 self._json(200, switch_account(index))
+                return
+            if parsed.path == "/api/me/profile":
+                if data.get("displayName") is not None or data.get("aboutMe") is not None:
+                    self._json(200, update_me_profile(data))
+                else:
+                    self._json(200, patch_me_profile(data))
                 return
             raise ApiError(404, "Not found.")
         except ApiError as exc:
@@ -2504,6 +5156,62 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             return
         except Exception:
+            traceback.print_exc()
+            self._json(500, {"error": "Something went wrong."})
+
+    def do_PUT(self) -> None:
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/api/me/profile":
+                self._json(200, update_me_profile(self._read_json()))
+                return
+            if parsed.path == "/api/me/profile/images":
+                self._json(200, set_me_profile_images(self._read_json()))
+                return
+            raise ApiError(404, "Not found.")
+        except ApiError as exc:
+            self._json(exc.status, {"error": exc.message})
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception:
+            traceback.print_exc()
+            self._json(500, {"error": "Something went wrong."})
+
+    def do_PATCH(self) -> None:
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/api/me/profile":
+                self._json(200, patch_me_profile(self._read_json()))
+                return
+            raise ApiError(404, "Not found.")
+        except ApiError as exc:
+            self._json(exc.status, {"error": exc.message})
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception:
+            traceback.print_exc()
+            self._json(500, {"error": "Something went wrong."})
+
+    def do_DELETE(self) -> None:
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/api/me/profile/images":
+                self._json(200, delete_me_profile_images(self._read_json()))
+                return
+            if parsed.path == "/api/auto-responder/photos":
+                body = self._read_json()
+                filename = str(body.get("filename") or "").strip()
+                if not filename:
+                    raise ApiError(400, "filename is required.")
+                self._json(200, delete_auto_responder_photo(filename))
+                return
+            raise ApiError(404, "Not found.")
+        except ApiError as exc:
+            self._json(exc.status, {"error": exc.message})
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception:
+            traceback.print_exc()
             self._json(500, {"error": "Something went wrong."})
 
 
@@ -2513,13 +5221,22 @@ def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     server.request_queue_size = 64
     _alexa_wake.set()
+    _auto_responder_wake.set()
     threading.Thread(target=_alexa_watcher, name="alexa", daemon=True).start()
+    threading.Thread(target=_auto_responder_watcher, name="auto-responder", daemon=True).start()
     print(f"Sniffies inbox at http://{HOST}:{PORT}")
     try:
         server.serve_forever()
     finally:
         _alexa_stop.set()
         _alexa_wake.set()
+        _auto_responder_stop.set()
+        _auto_responder_wake.set()
+        try:
+            if _auto_responder_timer is not None:
+                _auto_responder_timer.cancel()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
