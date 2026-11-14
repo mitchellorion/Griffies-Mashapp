@@ -86,6 +86,7 @@ _alexa_wake = threading.Event()
 _alexa_stop = threading.Event()
 _auto_responder_status_lock = threading.Lock()
 _auto_responder_status = {"lastError": "", "lastOk": "", "enabled": False}
+_auto_responder_events: list = []
 _auto_responder_wake = threading.Event()
 _auto_responder_stop = threading.Event()
 _auto_responder_timer_lock = threading.Lock()
@@ -4176,6 +4177,21 @@ _AUTO_RESPONDER_DEFAULTS = {
 }
 
 
+def _auto_responder_event(kind: str, detail: str = "") -> None:
+    """Append an event to the debug ring buffer (newest last, max 200)."""
+    with _auto_responder_status_lock:
+        stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        entry = {"t": stamp, "kind": kind, "detail": detail[:300]}
+        last = _auto_responder_events[-1] if _auto_responder_events else None
+        if last and last["kind"] == kind and last["detail"] == detail:
+            last["t"] = stamp
+            last["count"] = int(last.get("count") or 1) + 1
+        else:
+            entry["count"] = 1
+            _auto_responder_events.append(entry)
+            del _auto_responder_events[:-200]
+
+
 def _set_auto_responder_status(
     error: str | None = None, ok: str | None = None, enabled: bool | None = None
 ) -> None:
@@ -4474,6 +4490,51 @@ def _call_ai_worker(cfg: dict, messages: list[dict]) -> str:
     return reply.strip()[:2000]
 
 
+def auto_responder_debug() -> dict:
+    cfg = load_auto_responder()
+    state = load_state_auto_responder()
+    with _auto_responder_status_lock:
+        status = dict(_auto_responder_status)
+        events = list(_auto_responder_events)
+    pending = state.get("pending") or {}
+    hour_start = float(state.get("hourStart") or 0)
+    return {
+        "status": status,
+        "config": {
+            "enabled": bool(cfg.get("enabled")),
+            "targetMode": cfg.get("targetMode"),
+            "targets": len(cfg.get("targets") or []),
+            "maxPerHour": cfg.get("maxPerHour"),
+            "minGapMinutes": cfg.get("minGapMinutes"),
+            "sendPhotosWhenAsked": bool(cfg.get("sendPhotosWhenAsked")),
+            "photosInPool": len(cfg.get("autoResponderPhotos") or []),
+            "model": cfg.get("model") or "(default)",
+            "promptChars": len(str(cfg.get("prompt") or "")),
+            "workerUrl": cfg.get("workerUrl"),
+        },
+        "state": {
+            "signedIn": _sniffies_in(),
+            "pollSeconds": AUTO_RESPONDER_POLL_SECONDS,
+            "seeded": bool(state.get("seeded")),
+            "trackedChats": len(state.get("last") or {}),
+            "pending": {
+                cid: {
+                    "waits": round(max(0, 15 - (time.time() - float(e.get("since") or 0)), 0), 1),
+                    "tries": int(e.get("tries") or 0),
+                    "lastAt": e.get("lastAt"),
+                }
+                if isinstance(e, dict)
+                else {"legacy": e}
+                for cid, e in pending.items()
+            },
+            "hourCount": state.get("hourCount"),
+            "hourWindowResetsIn": max(0, round(3600 - (time.time() - hour_start))),
+            "repliesSent": len(state.get("replies") or {}),
+        },
+        "events": events[-200:],
+    }
+
+
 def auto_responder_test() -> dict:
     cfg = load_auto_responder()
     if not cfg.get("workerUrl") or not cfg.get("key"):
@@ -4495,8 +4556,10 @@ def _auto_responder_once() -> None:
     )
     _set_auto_responder_status(enabled=enabled)
     if not enabled:
+        _auto_responder_event("tick", "off (enabled/URL/key/terms not all set)")
         return
     if not _sniffies_in():
+        _auto_responder_event("tick", "skipped: not signed in to Sniffies")
         return
     try:
         chats = fetch_chats()
@@ -4514,6 +4577,7 @@ def _auto_responder_once() -> None:
         state["hourStart"] = time.time()
         _save_state_auto_responder(state)
         _set_auto_responder_status(ok="Watching. First check recorded existing chats.")
+        _auto_responder_event("seed", f"recorded {len(conversations)} existing chats")
         print("auto-responder seeded")
         return
 
@@ -4535,9 +4599,30 @@ def _auto_responder_once() -> None:
 
     target_mode = str(cfg.get("targetMode") or "all")
     targets = set(cfg.get("targets") or [])
-    pending = state.get("pending") or {}
-    pending_was_empty = not pending
-    new_pending = False
+    pending = state.get("pending")
+    if not isinstance(pending, dict):
+        pending = state["pending"] = {}
+    wake_soon = False
+
+    def _consume(cid: str, last_at: str, entry: dict) -> None:
+        # Mark the thread as handled only once we are done with it.
+        if last_at:
+            state["last"][cid] = last_at
+        elif entry.get("lastAt"):
+            state["last"][cid] = entry["lastAt"]
+        pending.pop(cid, None)
+
+    def _bump_tries(cid: str, last_at: str, entry: dict, why: str) -> None:
+        entry["tries"] = int(entry.get("tries") or 0) + 1
+        if entry["tries"] >= 5:
+            print(f"auto-responder giving up on {cid} after {entry['tries']} tries: {why}")
+            _auto_responder_event("giveup", f"{cid[:12]}: {why}")
+            _consume(cid, last_at, entry)
+
+    previews = {
+        str(c.get("conversationId") or ""): str(c.get("preview") or "")
+        for c in conversations
+    }
 
     for conv in sorted_conversations:
         cid = str(conv.get("conversationId") or "")
@@ -4549,34 +4634,51 @@ def _auto_responder_once() -> None:
         last_at = str(conv.get("lastAt") or "")
         prev = state["last"].get(cid) or ""
         is_new = _newer(last_at, prev)
+        mine = bool(conv.get("mine"))
+
+        entry = pending.get(cid)
+        if isinstance(entry, (int, float)):
+            entry = {"since": float(entry), "lastAt": "", "tries": 0}
+
         if is_new:
-            state["last"][cid] = last_at
-            if bool(conv.get("mine")):
-                pending.pop(cid, None)
+            if mine:
+                # Our own message is the latest; nothing to answer.
+                _consume(cid, last_at, entry or {})
                 continue
-            if cid not in pending:
-                pending[cid] = now
-                new_pending = True
+            if entry is None:
+                entry = {"since": now, "lastAt": last_at, "tries": 0}
+                pending[cid] = entry
+                _auto_responder_event("watch", f"{cid[:12]}: {previews.get(cid, '')}")
+            elif _newer(last_at, entry.get("lastAt") or ""):
+                entry["lastAt"] = last_at
+        elif entry is None:
             continue
-        if cid not in pending:
+
+        # An entry exists: wait out the quiet period, then try to send.
+        if now - float(entry["since"]) < 15:
+            wake_soon = True
             continue
-        if now - float(pending[cid]) < 15:
-            continue
-        del pending[cid]
-        if bool(conv.get("mine")):
+        if mine:
+            _consume(cid, last_at, entry)
             continue
         last_reply_at = state["replies"].get(cid)
         if isinstance(last_reply_at, (int, float)) and now - float(last_reply_at) < min_gap:
+            wake_soon = True
             continue
         if int(state.get("hourCount") or 0) >= max_per_hour:
+            wake_soon = True
             continue
         try:
             thread = fetch_thread(cid, None)
         except ApiError as exc:
             print(f"auto-responder could not fetch thread {cid}: {exc.message}")
+            _bump_tries(cid, last_at, entry, exc.message)
             continue
         messages = _prepare_thread_messages(thread)
         if not messages or messages[-1].get("role") != "user":
+            # The latest message is ours or the thread is empty; nothing to answer.
+            _auto_responder_event("skip", f"{cid[:12]}: nothing to answer (latest is ours)")
+            _consume(cid, last_at, entry)
             continue
         last_text = messages[-1].get("content") or ""
         photo_pool = list(cfg.get("autoResponderPhotos") or [])
@@ -4589,35 +4691,46 @@ def _auto_responder_once() -> None:
                 state["photoLast"] = photo_last
                 state["replies"][cid] = now
                 state["hourCount"] = int(state.get("hourCount") or 0) + 1
+                _consume(cid, last_at, entry)
                 sent += 1
                 ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                 _set_auto_responder_status(ok=f"Auto-sent photo at {ts}.")
-                continue
+                _auto_responder_event("sent", f"{cid[:12]}: photo ({chosen})")
             except ApiError as exc:
                 _set_auto_responder_status(error=f"Photo send failed: {exc.message}")
                 print(f"auto-responder photo send failed for {cid}: {exc.message}")
-                continue
+                _bump_tries(cid, last_at, entry, exc.message)
+            continue
         try:
             reply = _call_ai_worker(cfg, messages)
         except ApiError as exc:
             _set_auto_responder_status(error=f"AI worker: {exc.message}")
             print(f"auto-responder AI failed: {exc.message}")
+            _bump_tries(cid, last_at, entry, exc.message)
             continue
         try:
             send_reply(cid, user_id, reply)
         except ApiError as exc:
             _set_auto_responder_status(error=f"Send failed: {exc.message}")
             print(f"auto-responder send failed for {cid}: {exc.message}")
+            _bump_tries(cid, last_at, entry, exc.message)
             continue
         state["replies"][cid] = now
         state["hourCount"] = int(state.get("hourCount") or 0) + 1
+        _consume(cid, last_at, entry)
         sent += 1
         ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
         _set_auto_responder_status(ok=f"Auto-replied at {ts}.")
+        _auto_responder_event("sent", f"{cid[:12]}: {reply[:60]}")
 
-    if new_pending and pending_was_empty:
+    if wake_soon:
         _auto_responder_schedule_wake(15)
     _save_state_auto_responder(state)
+    _auto_responder_event(
+        "tick",
+        f"{len(conversations)} chats, {len(pending)} pending, sent {sent}"
+        + (", wake in 15s" if wake_soon else ""),
+    )
     if sent:
         print(f"auto-responder sent {sent} replies")
 
@@ -4632,9 +4745,11 @@ def _auto_responder_watcher() -> None:
             _auto_responder_once()
         except ApiError as exc:
             _set_auto_responder_status(error=exc.message)
+            _auto_responder_event("error", exc.message)
             print(f"auto-responder check failed: {exc.message}")
-        except Exception:
+        except Exception as exc:
             _set_auto_responder_status(error="Could not run auto-responder check.")
+            _auto_responder_event("error", f"crash: {exc!r}")
             print("auto-responder check failed")
 
 
@@ -4907,6 +5022,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/auto-responder/settings":
                 self._json(200, auto_responder_public())
+                return
+            if path == "/api/auto-responder/debug":
+                self._json(200, auto_responder_debug())
                 return
             if path == "/api/auto-responder/photos":
                 owner = ""

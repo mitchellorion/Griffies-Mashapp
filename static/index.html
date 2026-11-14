@@ -210,6 +210,17 @@
   .alerts .check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
   .alerts .row { display: flex; gap: 8px; }
   .alerts .hint { color: var(--muted); font-size: 12px; margin: 0; }
+  .debug-log {
+    max-height: 300px; overflow: auto; margin: 6px 0 0; padding: 8px;
+    background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px; color: var(--text); font-size: 12px; line-height: 1.45;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .debug-log .ev-sent { color: #7ddc9a; }
+  .debug-log .ev-error, .debug-log .ev-giveup { color: #ff8f8f; }
+  .debug-log .ev-watch { color: #ffd479; }
+  .debug-log .ev-skip { color: var(--muted); }
   .filters {
     position: absolute;
     z-index: 2;
@@ -1008,8 +1019,10 @@
       <button class="primary" type="submit">Save</button>
       <button class="ghost" id="autoResponderTest" type="button">Test</button>
       <button class="ghost" id="autoResponderRun" type="button">Run once</button>
+      <button class="ghost" id="autoResponderDebugBtn" type="button">Debug</button>
     </div>
     <p class="hint" id="autoResponderMsg"></p>
+    <pre id="autoResponderDebug" hidden class="debug-log"></pre>
   </form>
   <div class="workspace">
   <div class="main">
@@ -3555,6 +3568,68 @@ document.getElementById("autoResponderRun").addEventListener("click", async () =
   const res = await fetch("/api/auto-responder/once", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   const data = await res.json();
   document.getElementById("autoResponderMsg").textContent = res.ok ? autoResponderNote(data) : (data.error || "Check failed.");
+});
+
+const autoResponderDebugBtn = document.getElementById("autoResponderDebugBtn");
+const autoResponderDebugEl = document.getElementById("autoResponderDebug");
+let autoResponderDebugTimer = null;
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+}
+
+function renderAutoResponderDebug(data) {
+  const c = data.config || {};
+  const s = data.state || {};
+  const st = data.status || {};
+  const lines = [];
+  lines.push(
+    `status  ${st.enabled ? "ENABLED" : "disabled"}  signed-in=${s.signedIn ? "yes" : "no"}` +
+      `  seeded=${s.seeded ? "yes" : "no"}  poll=${s.pollSeconds}s`
+  );
+  lines.push(
+    `config  mode=${c.targetMode}  targets=${c.targets}  max/h=${c.maxPerHour}` +
+      `  gap=${c.minGapMinutes}min  model=${c.model}`
+  );
+  lines.push(
+    `state   pending=${Object.keys(s.pending || {}).length}  sent=${s.repliesSent}` +
+      `  hour=${s.hourCount}/${c.maxPerHour}  resets-in=${Math.round((s.hourWindowResetsIn || 0) / 60)}min`
+  );
+  if (st.lastOk) lines.push(`last-ok ${st.lastOk}`);
+  if (st.lastError) lines.push(`last-err ${st.lastError}`);
+  const pend = s.pending || {};
+  for (const [cid, e] of Object.entries(pend)) {
+    lines.push(`pending ${cid.slice(0, 12)}  waits=${e.waits}s  tries=${e.tries}  lastAt=${e.lastAt || "?"}`);
+  }
+  lines.push("--- events (newest last) ---");
+  for (const ev of data.events || []) {
+    const count = ev.count > 1 ? ` x${ev.count}` : "";
+    lines.push(`<span class="ev-${escapeHtml(ev.kind)}">[${ev.t}] ${escapeHtml(ev.kind)} ${escapeHtml(ev.detail)}${count}</span>`);
+  }
+  autoResponderDebugEl.innerHTML = lines.join("\n");
+}
+
+async function pollAutoResponderDebug() {
+  try {
+    const res = await fetch("/api/auto-responder/debug");
+    if (!res.ok) return;
+    renderAutoResponderDebug(await res.json());
+  } catch {
+    /* server briefly busy; keep the window open */
+  }
+}
+
+autoResponderDebugBtn.addEventListener("click", () => {
+  const show = autoResponderDebugEl.hidden;
+  autoResponderDebugEl.hidden = !show;
+  autoResponderDebugBtn.textContent = show ? "Hide debug" : "Debug";
+  if (show) {
+    pollAutoResponderDebug();
+    autoResponderDebugTimer = setInterval(pollAutoResponderDebug, 3000);
+  } else if (autoResponderDebugTimer) {
+    clearInterval(autoResponderDebugTimer);
+    autoResponderDebugTimer = null;
+  }
 });
 
 privacyBtn.addEventListener("click", () => setPrivacy(!privacyMode));
