@@ -53,7 +53,7 @@
   .login p { margin: 0 0 8px; color: var(--muted); }
   .login .logo { width: 96px; height: 96px; margin: 0 auto 12px; display: block; }
   .brand { display: flex; align-items: center; gap: 10px; }
-  .app-logo { width: 28px; height: 28px; display: block; }
+  .app-logo { width: 30px; height: 30px; display: block; border-radius: 8px; }
   .target-list {
     max-height: 220px;
     overflow: auto;
@@ -153,8 +153,49 @@
     background: rgba(11, 11, 11, 0.92);
     backdrop-filter: blur(8px);
   }
-  header.bar h1 { margin: 0; font-size: 22px; letter-spacing: -0.03em; }
-  .bar-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  header.bar { border-bottom: 1px solid var(--line); padding: 10px 14px; }
+  header.bar h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
+  .wordmark { font-weight: 800; font-size: 21px; letter-spacing: -0.04em; color: var(--text); }
+  .brand-sep { width: 1px; height: 20px; background: var(--line); margin: 0 2px; }
+  .bar-actions { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  .bar-actions > .ghost, .more-menu > summary {
+    min-height: 36px;
+    padding: 0 12px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .bar-actions > .ghost:hover, .more-menu > summary:hover, .more-menu[open] > summary { background: var(--card); color: var(--text); }
+  .icon-btn { width: 36px; padding: 0 !important; }
+  .ai-btn { border: 1px solid var(--line) !important; color: var(--text) !important; }
+  .ai-btn.on { background: var(--yellow) !important; color: var(--ink) !important; border-color: var(--yellow) !important; }
+  .more-menu { position: relative; }
+  .more-menu > summary { list-style: none; cursor: pointer; }
+  .more-menu > summary::-webkit-details-marker { display: none; }
+  .more-list {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 20;
+    min-width: 180px;
+    display: flex;
+    flex-direction: column;
+    padding: 6px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  }
+  .more-list .ghost { text-align: left; padding: 10px 12px; border-radius: 10px; color: var(--text); }
+  .more-list .ghost:hover { background: #222; }
+  .more-list .ghost.on { color: var(--yellow); }
+  .more-list .danger-item { color: var(--danger); }
+  @media (max-width: 640px) {
+    .wordmark, .brand-sep { display: none; }
+    header.bar { padding: 8px 10px; }
+  }
   .filter-btn { position: relative; padding-right: 12px; }
   .filter-dot {
     position: absolute;
@@ -178,7 +219,8 @@
     border: 1px solid var(--line);
     border-radius: 10px;
     padding: 6px 8px;
-    max-width: 170px;
+    max-width: 190px;
+    min-height: 36px;
   }
   .community-row {
     display: flex;
@@ -210,6 +252,70 @@
   .alerts .check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
   .alerts .row { display: flex; gap: 8px; }
   .alerts .hint { color: var(--muted); font-size: 12px; margin: 0; }
+  .ai-panel {
+    position: fixed; z-index: 30; top: 58px; right: 12px;
+    width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 140px);
+    min-width: 320px; min-height: 240px;
+    overflow: auto; padding: 0 14px 14px; gap: 0;
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  }
+  .ai-panel.sized { max-height: none; }
+  .ai-panel .ai-head { position: sticky; top: 0; z-index: 2; background: var(--card); padding: 12px 0 10px; margin: 0 -14px; padding-left: 14px; padding-right: 14px; border-bottom: 1px solid var(--line); }
+  .ai-panel .ai-section:first-of-type { border-top: 0; }
+  .ai-panel input, .ai-panel textarea { background: var(--bg); }
+  .ai-head { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; }
+  .ai-msg { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: #1f1f1f; border: 1px solid var(--line); }
+  .ai-msg .hint { flex: 1; color: var(--text) !important; font-size: 13px !important; }
+  .ai-msg.err { background: rgba(255, 107, 107, 0.08); border-color: rgba(255, 107, 107, 0.4); }
+  .ai-msg .ghost { padding: 0 4px; color: var(--muted); line-height: 1.2; }
+  .update-bar {
+    position: fixed; z-index: 50; left: 50%; bottom: 76px; transform: translateX(-50%);
+    width: min(680px, calc(100vw - 24px));
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    padding: 12px 14px; border-radius: 14px;
+    background: var(--card); border: 1px solid rgba(255, 210, 0, 0.45);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55); font-size: 14px;
+  }
+  .update-bar > span { flex: 1 1 260px; }
+  .update-bar strong { color: var(--yellow); }
+  .update-bar a.primary { padding: 8px 14px; text-decoration: none; display: inline-flex; align-items: center; min-height: 36px; }
+  .update-bar a.ghost { color: var(--text); text-decoration: none; }
+  .ai-head-right { display: flex; align-items: center; gap: 10px; }
+  .ai-head strong { font-size: 16px; margin-right: 8px; }
+  .ai-status { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: #222; color: var(--muted); }
+  .ai-status.live { background: rgba(255, 210, 0, 0.14); color: var(--yellow); }
+  .ai-status.err { background: rgba(255, 107, 107, 0.14); color: var(--danger); }
+  .ai-section { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .ai-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .ai-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
+  @media (max-width: 560px) { .ai-grid { grid-template-columns: 1fr; } }
+  .ai-risk { border: 1px solid rgba(255, 107, 107, 0.4); background: rgba(255, 107, 107, 0.06); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .ai-more > summary { cursor: pointer; font-weight: 600; color: var(--text); list-style: none; }
+  .ai-more > summary::-webkit-details-marker { display: none; }
+  .ai-more > summary::before { content: "▸"; display: inline-block; margin-right: 8px; color: var(--muted); transition: transform 0.15s; }
+  .ai-more[open] > summary::before { transform: rotate(90deg); }
+  .ai-more .row input { width: 6em; }
+  .ai-file { font-size: 13px; color: var(--muted); }
+  .ai-actions { padding-top: 12px; border-top: 1px solid var(--line); flex-wrap: wrap; align-items: center; }
+  .switch { flex-direction: row !important; align-items: center; gap: 8px; color: var(--text) !important; font-size: 14px !important; cursor: pointer; }
+  .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .switch span { width: 40px; height: 24px; border-radius: 999px; background: #333; position: relative; transition: background 0.15s; flex: none; }
+  .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #ddd; transition: transform 0.15s; }
+  .switch input:checked + span { background: var(--yellow); }
+  .switch input:checked + span::after { transform: translateX(16px); background: var(--ink); }
+  .switch input:focus-visible + span { outline: 2px solid var(--yellow); outline-offset: 2px; }
+  .draft-bar {
+    margin: 0 12px 8px; padding: 10px 12px; border-radius: 14px;
+    background: rgba(255, 210, 0, 0.07); border: 1px solid rgba(255, 210, 0, 0.35);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .draft-top { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--yellow); font-weight: 700; }
+  .draft-text { margin: 0; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+  .draft-photo { font-size: 12px; color: var(--muted); }
+  .draft-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .draft-actions .primary { padding: 8px 14px; }
+  .suggest-btn { color: var(--yellow) !important; font-weight: 700; white-space: nowrap; }
   .debug-log {
     max-height: 300px; overflow: auto; margin: 6px 0 0; padding: 8px;
     background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.12);
@@ -280,7 +386,59 @@
     gap: 6px;
     align-items: center;
   }
-  .filters .group .label { color: var(--muted); font-size: 12px; margin-right: 2px; }
+  .filters .group .label { color: var(--muted); font-size: 12px; margin-right: 2px; min-width: 64px; }
+  .filters { gap: 0; padding: 0; max-width: 720px; left: auto; right: 12px; width: calc(100% - 24px); }
+  .filters { min-width: 320px; min-height: 220px; }
+  .filters.sized { max-height: none; max-width: none; }
+  .corner { position: absolute; z-index: 5; width: 16px; height: 16px; touch-action: none; }
+  .corner::after { content: ""; position: absolute; width: 8px; height: 8px; border: 0 solid var(--muted); opacity: 0.55; }
+  .corner:hover::after, .filters.resizing .corner::after { border-color: var(--yellow); opacity: 1; }
+  .corner.nw { top: 0; left: 0; cursor: nwse-resize; }
+  .corner.ne { top: 0; right: 0; cursor: nesw-resize; }
+  .corner.sw { bottom: 0; left: 0; cursor: nesw-resize; }
+  .corner.se { bottom: 0; right: 0; cursor: nwse-resize; }
+  .corner.nw::after { top: 3px; left: 3px; border-top-width: 2px; border-left-width: 2px; border-top-left-radius: 4px; }
+  .corner.ne::after { top: 3px; right: 3px; border-top-width: 2px; border-right-width: 2px; border-top-right-radius: 4px; }
+  .corner.sw::after { bottom: 3px; left: 3px; border-bottom-width: 2px; border-left-width: 2px; border-bottom-left-radius: 4px; }
+  .corner.se::after { bottom: 3px; right: 3px; border-bottom-width: 2px; border-right-width: 2px; border-bottom-right-radius: 4px; }
+  .filters.resizing, .ai-panel.resizing { user-select: none; }
+  .filters-head {
+    position: sticky; top: 0; z-index: 1;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 14px; background: var(--card); border-bottom: 1px solid var(--line);
+  }
+  .filters-head strong { font-size: 16px; margin-right: 8px; }
+  .filter-count { color: var(--muted); font-size: 13px; }
+  .filters-head .ghost { color: var(--yellow); }
+  .filter-section { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-bottom: 1px solid var(--line); }
+  .filter-section:last-child { border-bottom: 0; }
+  .filters label:not(.chip) { flex-direction: column; gap: 4px; font-size: 12px; }
+  .filters label.grow { flex: 1; min-width: 180px; }
+  .filters input[type="search"], .filters #presetName { padding: 8px 12px; border-radius: 999px; background: var(--bg); width: 100%; }
+  .filters #presetForm { flex-wrap: nowrap; }
+  .filters .save-preset { white-space: nowrap; color: var(--yellow); }
+  .seg { display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+  .seg button { border: 0; background: transparent; color: var(--muted); border-radius: 999px; padding: 5px 12px; font-size: 13px; font-weight: 600; }
+  .seg button.on { background: var(--yellow); color: var(--ink); }
+  .seg { flex-wrap: wrap; }
+  .age-quick { display: flex; flex-wrap: wrap; gap: 6px; }
+  .more-filters > summary { cursor: pointer; color: var(--text); font-weight: 600; font-size: 14px; list-style: none; }
+  .more-filters > summary::-webkit-details-marker { display: none; }
+  .more-filters > summary::before { content: "▸"; display: inline-block; margin-right: 8px; color: var(--muted); transition: transform 0.15s; }
+  .more-filters[open] > summary::before { transform: rotate(90deg); }
+  .more-filters[open] > summary { margin-bottom: 4px; }
+  #moreFiltersCount { color: var(--yellow); font-size: 12px; margin-left: 6px; }
+  .filter-active { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .active-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255, 210, 0, 0.12); color: var(--yellow);
+    border: 1px solid rgba(255, 210, 0, 0.35); border-radius: 999px;
+    padding: 4px 6px 4px 10px; font-size: 12px; font-weight: 600;
+  }
+  .active-chip span { color: var(--yellow); opacity: 0.8; font-size: 14px; line-height: 1; }
+  .preset-chip { display: inline-flex; align-items: center; gap: 2px; }
+  .preset-chip .preset-del { border: 0; background: transparent; color: var(--muted); font-size: 14px; padding: 2px 6px; }
+  .preset-empty { color: var(--muted); font-size: 12px; }
   .age-box { display: flex; flex-direction: column; gap: 8px; }
   .age-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; }
   .age-head span:last-child { color: var(--yellow); font-weight: 700; }
@@ -901,14 +1059,31 @@
     padding: 8px 10px;
   }
   #mapCanvas { flex: 1; min-height: 240px; }
-  .map-pin {
-    background: var(--yellow);
-    border: 3px solid #14120a;
+  #mapCanvas { background: #0b0b0b; }
+  .map-pin { width: 34px; height: 44px; cursor: grab; filter: drop-shadow(0 4px 10px rgba(255, 210, 0, 0.35)); }
+  .map-pin svg { display: block; width: 100%; height: 100%; }
+  .map-pin::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: -6px;
+    width: 18px;
+    height: 18px;
+    margin-left: -9px;
     border-radius: 50%;
-    box-shadow: 0 0 0 1px var(--yellow);
+    border: 2px solid var(--yellow);
+    opacity: 0;
+    animation: pin-ping 2.2s ease-out infinite;
   }
-  .leaflet-container { background: #141414; font: inherit; }
-  .leaflet-control-attribution { font-size: 11px; }
+  @keyframes pin-ping { 0% { transform: scale(0.4); opacity: 0.8; } 100% { transform: scale(2.4); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .map-pin::after { animation: none; } }
+  .maplibregl-map { font: inherit; }
+  .maplibregl-ctrl-group { background: var(--card) !important; border: 1px solid var(--line); }
+  .maplibregl-ctrl-group button { background-color: transparent !important; }
+  .maplibregl-ctrl-group button + button { border-top-color: var(--line) !important; }
+  .maplibregl-ctrl-icon { filter: invert(1) brightness(0.85); }
+  .maplibregl-ctrl-attrib { background: rgba(11, 11, 11, 0.7) !important; font-size: 11px; }
+  .maplibregl-ctrl-attrib a { color: var(--muted) !important; }
   .ghost:disabled { opacity: 0.4; cursor: default; }
   .privacy-wrap { position: relative; display: block; width: 100%; }
   .privacy-wrap img,
@@ -969,23 +1144,37 @@
   </div>
 </section>
 
+<div class="update-bar" id="updateBar" role="status" hidden>
+  <span><strong>Griffies <span id="updateLatest"></span> is available.</strong> You have <span id="updateCurrent"></span>.</span>
+  <a class="primary" id="updateGet" href="#" target="_blank" rel="noopener">Download</a>
+  <a class="ghost" id="updateNotes" href="#" target="_blank" rel="noopener">What's new</a>
+  <button class="ghost" id="updateLater" type="button">Later</button>
+  <button class="ghost" id="updateSkip" type="button">Skip this version</button>
+</div>
 <div class="app" id="appView" hidden>
   <header class="bar">
     <div class="brand">
       <img class="app-logo" src="/logo.png" alt="">
+      <span class="wordmark">griffies</span>
+      <span class="brand-sep" aria-hidden="true"></span>
       <h1 id="viewTitle">Nearby</h1>
     </div>
     <div class="bar-actions">
       <select class="account-select" id="accountSelect" aria-label="Sniffies account" hidden></select>
-      <button class="ghost" id="accountsBtn" type="button">Accounts</button>
       <button class="ghost filter-btn" id="filterBtn" type="button">Filters<span class="filter-dot" id="filterDot" hidden></span></button>
       <button class="ghost filter-btn" id="mapBtn" type="button">Map<span class="filter-dot" id="mapDot" hidden></span></button>
-      <button class="ghost" id="profileBtn" type="button">Profile</button>
-      <button class="ghost" id="refreshBtn" type="button">Refresh</button>
-      <button class="ghost" id="notifyBtn" type="button">Notify</button>
-      <button class="ghost" id="autoResponderBtn" type="button">AI Reply</button>
-      <button class="ghost" id="privacyBtn" type="button">Privacy</button>
-      <button class="ghost" id="logoutBtn" type="button">Log out</button>
+      <button class="ghost ai-btn" id="autoResponderBtn" type="button">AI Reply</button>
+      <button class="ghost icon-btn" id="refreshBtn" type="button" aria-label="Refresh" title="Refresh"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg></button>
+      <details class="more-menu" id="moreMenu">
+        <summary class="ghost icon-btn" aria-label="More" title="More"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor"><circle cx="5" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="19" cy="12" r="2"></circle></svg></summary>
+        <div class="more-list">
+          <button class="ghost" id="accountsBtn" type="button">Accounts</button>
+          <button class="ghost" id="profileBtn" type="button">Profile</button>
+          <button class="ghost" id="notifyBtn" type="button">Notify</button>
+          <button class="ghost" id="privacyBtn" type="button">Privacy</button>
+          <button class="ghost danger-item" id="logoutBtn" type="button">Log out</button>
+        </div>
+      </details>
     </div>
   </header>
   <form class="alerts" id="notifyPanel" hidden>
@@ -998,63 +1187,177 @@
     </div>
     <p class="hint" id="notifyMsg"></p>
   </form>
-  <form class="alerts" id="autoResponderPanel" hidden>
-    <label class="check"><input id="autoResponderOn" type="checkbox"> Enable AI auto-responder</label>
-    <p class="hint"><strong>Warning:</strong> automated replies may violate Sniffies Terms of Service and can read/send private messages through Cloudflare Workers AI. Use at your own risk.</p>
-    <label>Worker URL <input id="autoResponderUrl" autocomplete="off" placeholder="https://sniffies-ai-responder.your-account.workers.dev"></label>
-    <label>Worker key <input id="autoResponderKey" type="password" autocomplete="off" placeholder="leave empty to keep saved key"></label>
-    <label>Model <small>(optional, e.g. @cf/meta/llama-3.1-8b-instruct)</small> <input id="autoResponderModel" autocomplete="off"></label>
-    <label>Custom prompt <textarea id="autoResponderPrompt" rows="4" placeholder="Describe how the AI should reply. If blank, a default cruising-app prompt is used."></textarea></label>
-    <div class="row">
-      <label>Max per hour <input id="autoResponderMaxHour" type="number" min="1" max="600" value="60" style="width:5em"></label>
-      <label>Min gap (min) <input id="autoResponderGap" type="number" min="0" max="1440" value="2" style="width:5em"></label>
+  <form class="alerts ai-panel" id="autoResponderPanel" hidden>
+    <span class="corner nw" data-c="nw" aria-hidden="true"></span>
+    <span class="corner ne" data-c="ne" aria-hidden="true"></span>
+    <span class="corner sw" data-c="sw" aria-hidden="true"></span>
+    <span class="corner se" data-c="se" aria-hidden="true"></span>
+    <div class="ai-head">
+      <div>
+        <strong>AI Reply</strong>
+        <span class="ai-status" id="autoResponderStatus">Off</span>
+      </div>
+      <div class="ai-head-right">
+      <label class="switch"><input id="autoResponderOn" type="checkbox"><span aria-hidden="true"></span> Watch chats</label>
+      <button class="ghost" id="autoResponderClose" type="button" aria-label="Close AI Reply">✕</button>
+      </div>
     </div>
-    <p class="hint">Use the <strong>AI</strong> toggle on each chat in the Chats list to choose which conversations the auto-responder watches.</p>
-    <label class="check"><input id="autoResponderSendPhotos" type="checkbox"> Send a saved photo when the other person asks</label>
-    <div class="photo-pool" id="autoResponderPhotoPool"></div>
-    <label style="margin: 4px 0; font-size: 13px; color: var(--muted);">Add photo <input id="autoResponderPhotoInput" type="file" accept="image/*"></label>
-    <p class="hint">The auto-responder waits 15 seconds after a new message arrives before it replies.</p>
-    <label class="check"><input id="autoResponderAccept" type="checkbox"> I accept the risk and want to enable this</label>
-    <div class="row">
+
+    <div class="ai-section">
+      <span class="ai-label">Mode</span>
+      <div class="seg" id="aiMode" role="group" aria-label="Reply mode">
+        <button type="button" data-val="draft" class="on">Drafts</button>
+        <button type="button" data-val="auto">Auto-send</button>
+      </div>
+      <p class="hint" id="aiModeHint">New messages get a suggested reply in the chat. You edit it and press Send.</p>
+      <div class="ai-risk" id="aiRisk" hidden>
+        <p class="hint"><strong>Auto-send replies as you, without review.</strong> The other person won't know it's automated, and automated messaging can get the account banned. Message text goes to Amazon Bedrock for generation.</p>
+        <label class="check"><input id="autoResponderAccept" type="checkbox"> I understand and want auto-send on</label>
+      </div>
+    </div>
+
+    <div class="ai-section">
+      <span class="ai-label">Model</span>
+      <div class="seg" id="aiProvider" role="group" aria-label="Provider">
+        <button type="button" data-val="bedrock" class="on">Amazon Bedrock</button>
+        <button type="button" data-val="openai">OpenAI-compatible</button>
+        <button type="button" data-val="worker">Cloudflare Worker</button>
+      </div>
+      <div class="ai-grid" id="aiOpenaiFields" hidden>
+        <label>API key <input id="autoResponderOpenaiKey" type="password" autocomplete="off" placeholder="sk-… (leave empty to keep saved key)"></label>
+        <label>Base URL <input id="autoResponderOpenaiBase" autocomplete="off" placeholder="https://api.openai.com/v1"></label>
+      </div>
+      <div class="ai-grid" id="aiBedrockFields">
+        <label>Bedrock API key <input id="autoResponderBedrockKey" type="password" autocomplete="off" placeholder="paste a Bedrock API key"></label>
+        <label>Region <input id="autoResponderRegion" autocomplete="off" placeholder="us-east-1"></label>
+      </div>
+      <p class="hint" id="aiKeyState"></p>
+      <div class="ai-grid" id="aiWorkerFields" hidden>
+        <label>Worker URL <input id="autoResponderUrl" autocomplete="off" placeholder="https://sniffies-ai-responder.your-account.workers.dev"></label>
+        <label>Worker key <input id="autoResponderKey" type="password" autocomplete="off" placeholder="leave empty to keep saved key"></label>
+      </div>
+      <label>Model ID <input id="autoResponderModel" autocomplete="off" placeholder="us.anthropic.claude-haiku-5-5"></label>
+    </div>
+
+    <details class="ai-section ai-more">
+      <summary>Voice &amp; limits</summary>
+      <label>How should replies sound? <textarea id="autoResponderPrompt" rows="4" placeholder="e.g. Short, flirty, lowercase. Never share my number. Ask what they're up to tonight."></textarea></label>
+      <div class="row">
+        <label>Max per hour <input id="autoResponderMaxHour" type="number" min="1" max="600" value="60"></label>
+        <label>Min gap (min) <input id="autoResponderGap" type="number" min="0" max="1440" value="2"></label>
+      </div>
+      <p class="hint">Use the <strong>AI</strong> toggle on a chat in the Chats list to pick which conversations get watched. You can also tap <strong>Suggest</strong> inside any chat.</p>
+    </details>
+
+    <details class="ai-section ai-more">
+      <summary>Photo pool</summary>
+      <label class="check"><input id="autoResponderSendPhotos" type="checkbox"> When someone asks for pics, include one of these</label>
+      <p class="hint">In Drafts mode the photo is only suggested; you choose whether to send it. Clear refusals like "no pics" are ignored.</p>
+      <div class="photo-pool" id="autoResponderPhotoPool"></div>
+      <label class="ai-file">Add photo <input id="autoResponderPhotoInput" type="file" accept="image/*"></label>
+    </details>
+
+    <div class="row ai-actions">
       <button class="primary" type="submit">Save</button>
       <button class="ghost" id="autoResponderTest" type="button">Test</button>
-      <button class="ghost" id="autoResponderRun" type="button">Run once</button>
+      <button class="ghost" id="autoResponderRun" type="button">Check now</button>
       <button class="ghost" id="autoResponderDebugBtn" type="button">Debug</button>
     </div>
-    <p class="hint" id="autoResponderMsg"></p>
+    <div class="ai-msg" id="autoResponderMsgWrap" hidden>
+      <p class="hint" id="autoResponderMsg"></p>
+      <button class="ghost" id="autoResponderMsgClose" type="button" aria-label="Dismiss message">✕</button>
+    </div>
     <pre id="autoResponderDebug" hidden class="debug-log"></pre>
   </form>
   <div class="workspace">
   <div class="main">
   <div class="filters" id="filters" hidden>
-    <div class="filter-row">
-      <label class="chip"><input id="filterPhoto" type="checkbox" checked> Photo</label>
-      <label class="chip"><input id="filterOnline" type="checkbox"> Online</label>
-      <select id="filterDistance" aria-label="Distance">
-        <option value="">Any distance</option>
-        <option value="1">1 mi</option>
-        <option value="5">5 mi</option>
-        <option value="10">10 mi</option>
-        <option value="20">20 mi</option>
-      </select>
+    <span class="corner nw" data-c="nw" aria-hidden="true"></span>
+    <span class="corner ne" data-c="ne" aria-hidden="true"></span>
+    <span class="corner sw" data-c="sw" aria-hidden="true"></span>
+    <span class="corner se" data-c="se" aria-hidden="true"></span>
+    <div class="filters-head">
+      <div>
+        <strong>Filters</strong>
+        <span class="filter-count" id="filterCount"></span>
+      </div>
+      <button class="ghost" id="filterClear" type="button">Reset all</button>
     </div>
-    <div class="age-box">
-      <div class="age-head"><span>Age</span><span id="ageReadout">Any</span></div>
-      <div class="age-track" id="ageTrack">
-        <div class="age-rail"></div>
-        <div class="age-fill" id="ageFill"></div>
-        <input id="filterAgeMin" type="range" min="18" max="99" value="18" step="1" aria-label="Minimum age">
-        <input id="filterAgeMax" type="range" min="18" max="99" value="99" step="1" aria-label="Maximum age">
+    <div class="filter-active" id="filterActive" hidden></div>
+
+    <div class="filter-section">
+      <div class="filter-row">
+        <div class="seg" id="filterSource" role="group" aria-label="Source">
+          <button type="button" data-val="" class="on">All</button>
+          <button type="button" data-val="sniffies">Sniffies</button>
+          <button type="button" data-val="grindr">Grindr</button>
+        </div>
+        <label class="chip"><input id="filterPhoto" type="checkbox" checked> Photo</label>
+        <label class="chip"><input id="filterOnline" type="checkbox"> Online</label>
+      </div>
+      <div class="filter-row">
+        <label class="grow">Search <input id="filterSearch" type="search" autocomplete="off" placeholder="Name"></label>
+        <label>Sort
+          <select id="filterSort">
+            <option value="distance">Nearest</option>
+            <option value="online">Online first</option>
+            <option value="age-asc">Youngest</option>
+            <option value="age-desc">Oldest</option>
+            <option value="unread">Unread first</option>
+          </select>
+        </label>
+        <label>Within
+          <select id="filterDistance">
+            <option value="">Any distance</option>
+            <option value="0.25">0.25 mi</option>
+            <option value="0.5">0.5 mi</option>
+            <option value="1">1 mi</option>
+            <option value="2">2 mi</option>
+            <option value="5">5 mi</option>
+            <option value="10">10 mi</option>
+            <option value="20">20 mi</option>
+            <option value="50">50 mi</option>
+          </select>
+        </label>
       </div>
     </div>
-    <div class="filter-row">
-      <label class="chip">Height <input id="filterHeightMin" type="number" min="48" max="96" inputmode="numeric" placeholder="min"> to <input id="filterHeightMax" type="number" min="48" max="96" inputmode="numeric" placeholder="max"> <span id="heightUnit">in</span></label>
-      <label class="chip">Weight <input id="filterWeightMin" type="number" min="90" max="400" inputmode="numeric" placeholder="min"> to <input id="filterWeightMax" type="number" min="90" max="400" inputmode="numeric" placeholder="max"> <span id="weightUnit">lb</span></label>
+
+    <div class="filter-section">
+      <div class="age-box">
+        <div class="age-head"><span>Age</span><span id="ageReadout">Any</span></div>
+        <div class="age-track" id="ageTrack">
+          <div class="age-rail"></div>
+          <div class="age-fill" id="ageFill"></div>
+          <input id="filterAgeMin" type="range" min="18" max="99" value="18" step="1" aria-label="Minimum age">
+          <input id="filterAgeMax" type="range" min="18" max="99" value="99" step="1" aria-label="Maximum age">
+        </div>
+        <div class="age-quick" id="ageQuick">
+          <button type="button" class="choice" data-lo="18" data-hi="25">18–25</button>
+          <button type="button" class="choice" data-lo="26" data-hi="35">26–35</button>
+          <button type="button" class="choice" data-lo="36" data-hi="45">36–45</button>
+          <button type="button" class="choice" data-lo="46" data-hi="99">46+</button>
+        </div>
+      </div>
+      <div class="filter-row">
+        <label class="chip">Height <input id="filterHeightMin" type="number" min="48" max="96" inputmode="numeric" placeholder="min"> to <input id="filterHeightMax" type="number" min="48" max="96" inputmode="numeric" placeholder="max"> <span id="heightUnit">in</span></label>
+        <label class="chip">Weight <input id="filterWeightMin" type="number" min="90" max="400" inputmode="numeric" placeholder="min"> to <input id="filterWeightMax" type="number" min="90" max="400" inputmode="numeric" placeholder="max"> <span id="weightUnit">lb</span></label>
+      </div>
     </div>
-    <div class="group" id="filterBody"><span class="label">Body</span></div>
-    <div class="group" id="filterPosition"><span class="label">Position</span></div>
-    <div class="group" id="filterTribe"><span class="label">Tribe</span></div>
-    <div class="filter-row"><button class="ghost" id="filterClear" type="button">Clear</button></div>
+
+    <details class="filter-section more-filters" id="moreFilters">
+      <summary>Body, position &amp; tribe <span id="moreFiltersCount"></span></summary>
+      <div class="group" id="filterBody"><span class="label">Body</span></div>
+      <div class="group" id="filterPosition"><span class="label">Position</span></div>
+      <div class="group" id="filterTribe"><span class="label">Tribe</span></div>
+    </details>
+
+    <div class="filter-section">
+      <div class="group" id="filterPresets"><span class="label">Presets</span></div>
+      <form class="filter-row" id="presetForm">
+        <input id="presetName" maxlength="24" autocomplete="off" placeholder="Name this filter set" aria-label="Preset name">
+        <button class="ghost save-preset" type="submit">Save preset</button>
+      </form>
+    </div>
   </div>
   <p class="hint" id="gridNote" hidden></p>
   <div class="grid" id="grid"></div>
@@ -1093,9 +1396,19 @@
   <div class="messages" id="messages"></div>
   <p class="error" id="threadError"></p>
   <p class="attached" id="threadAttached" hidden>Photo attached</p>
+  <div class="draft-bar" id="draftBar" hidden>
+    <div class="draft-top"><span>AI draft</span><button class="ghost" id="draftDismiss" type="button" aria-label="Dismiss draft">Dismiss</button></div>
+    <p class="draft-text" id="draftText"></p>
+    <span class="draft-photo" id="draftPhoto" hidden></span>
+    <div class="draft-actions">
+      <button class="primary" id="draftUse" type="button">Use reply</button>
+      <button class="ghost" id="draftRedo" type="button">Try again</button>
+    </div>
+  </div>
   <form class="composer" id="composer">
     <input id="threadPhoto" type="file" accept="image/jpeg,image/png,image/webp" hidden>
     <button class="photo-btn" id="threadPhotoBtn" type="button">Photo</button>
+    <button class="ghost suggest-btn" id="suggestBtn" type="button" title="Suggest a reply with AI">Suggest</button>
     <textarea id="box" rows="1" placeholder="Message"></textarea>
     <button class="primary" id="send" type="submit">Send</button>
   </form>
@@ -1991,7 +2304,155 @@ function finiteAge(value, fallback) {
   return Math.min(AGE_HI, Math.max(AGE_LO, n));
 }
 
+const PRESET_KEY = "griffies-filter-presets-v1";
+
+function sourceValue() {
+  const on = document.querySelector("#filterSource button.on");
+  return on ? on.dataset.val : "";
+}
+
+function setSource(val) {
+  document.querySelectorAll("#filterSource button").forEach((b) => b.classList.toggle("on", b.dataset.val === (val || "")));
+}
+
+function searchValue() {
+  return document.getElementById("filterSearch").value.trim().toLowerCase();
+}
+
+function choiceLabel(list, slug) {
+  const hit = list.find((c) => c[0] === slug);
+  return hit ? hit[1] : slug;
+}
+
+function activeFilters() {
+  const out = [];
+  const state = serverFilterState();
+  const src = sourceValue();
+  if (src) out.push({ label: src === "grindr" ? "Grindr only" : "Sniffies only", clear: () => setSource("") });
+  if (state.photo) out.push({ label: "Has photo", clear: () => { document.getElementById("filterPhoto").checked = false; } });
+  if (state.online) out.push({ label: "Online", clear: () => { document.getElementById("filterOnline").checked = false; } });
+  const q = document.getElementById("filterSearch").value.trim();
+  if (q) out.push({ label: "“" + q + "”", clear: () => { document.getElementById("filterSearch").value = ""; } });
+  const dist = document.getElementById("filterDistance").value;
+  if (dist) out.push({ label: "≤ " + distanceLabel(Number(dist)), clear: () => { document.getElementById("filterDistance").value = ""; } });
+  if (state.ageMin != null || state.ageMax != null) out.push({ label: "Age " + document.getElementById("ageReadout").textContent, clear: () => {
+    document.getElementById("filterAgeMin").value = String(AGE_LO);
+    document.getElementById("filterAgeMax").value = String(AGE_HI);
+  } });
+  if (state.heightMin != null || state.heightMax != null) out.push({ label: "Height", clear: () => {
+    document.getElementById("filterHeightMin").value = "";
+    document.getElementById("filterHeightMax").value = "";
+  } });
+  if (state.weightMin != null || state.weightMax != null) out.push({ label: "Weight", clear: () => {
+    document.getElementById("filterWeightMin").value = "";
+    document.getElementById("filterWeightMax").value = "";
+  } });
+  for (const [id, list] of [["filterBody", BODY_CHOICES], ["filterPosition", POSITION_CHOICES], ["filterTribe", TRIBE_CHOICES]]) {
+    for (const slug of chosen(id)) {
+      out.push({ label: choiceLabel(list, slug), clear: () => {
+        const btn = document.querySelector("#" + id + ' .choice[data-slug="' + slug + '"]');
+        if (btn) btn.classList.remove("on");
+      } });
+    }
+  }
+  return out;
+}
+
+function paintFilterExtras() {
+  const box = document.getElementById("filterActive");
+  const list = activeFilters();
+  box.replaceChildren();
+  for (const f of list) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "active-chip";
+    chip.setAttribute("aria-label", "Remove filter " + f.label);
+    chip.append(document.createTextNode(f.label));
+    const x = document.createElement("span");
+    x.setAttribute("aria-hidden", "true");
+    x.textContent = "×";
+    chip.append(x);
+    chip.addEventListener("click", (event) => {
+      event.stopPropagation();
+      f.clear();
+      onFiltersChanged();
+    });
+    box.append(chip);
+  }
+  box.hidden = !list.length;
+  const extra = chosen("filterBody").length + chosen("filterPosition").length + chosen("filterTribe").length;
+  document.getElementById("moreFiltersCount").textContent = extra ? extra + " selected" : "";
+  const lo = ageValue("filterAgeMin");
+  const hi = ageValue("filterAgeMax");
+  document.querySelectorAll("#ageQuick .choice").forEach((b) => {
+    b.classList.toggle("on", Number(b.dataset.lo) === lo && Number(b.dataset.hi) === hi);
+  });
+}
+
+function loadPresets() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PRESET_KEY) || "{}");
+    return raw && typeof raw === "object" ? raw : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function paintPresets() {
+  const root = document.getElementById("filterPresets");
+  root.querySelectorAll(".preset-chip, .preset-empty").forEach((el) => el.remove());
+  const presets = loadPresets();
+  const names = Object.keys(presets);
+  if (!names.length) {
+    const empty = document.createElement("span");
+    empty.className = "preset-empty";
+    empty.textContent = "Save the filters you use often.";
+    root.append(empty);
+    return;
+  }
+  for (const name of names) {
+    const wrap = document.createElement("span");
+    wrap.className = "preset-chip";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "choice";
+    btn.textContent = name;
+    btn.addEventListener("click", () => {
+      localStorage.setItem(FILTER_KEY, JSON.stringify(presets[name]));
+      restoreFilters();
+      onFiltersChanged();
+    });
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "preset-del";
+    del.setAttribute("aria-label", "Delete preset " + name);
+    del.textContent = "×";
+    del.addEventListener("click", () => {
+      const all = loadPresets();
+      delete all[name];
+      localStorage.setItem(PRESET_KEY, JSON.stringify(all));
+      paintPresets();
+    });
+    wrap.append(btn, del);
+    root.append(wrap);
+  }
+}
+
+function sortCards(list) {
+  const how = document.getElementById("filterSort").value;
+  const num = (v, fallback) => (v == null || v === "" || !Number.isFinite(Number(v)) ? fallback : Number(v));
+  const byDist = (a, b) => num(a.distance, 1e9) - num(b.distance, 1e9);
+  const sorted = list.slice();
+  if (how === "online") sorted.sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0) || byDist(a, b));
+  else if (how === "age-asc") sorted.sort((a, b) => num(a.age, 999) - num(b.age, 999) || byDist(a, b));
+  else if (how === "age-desc") sorted.sort((a, b) => num(b.age, -1) - num(a.age, -1) || byDist(a, b));
+  else if (how === "unread") sorted.sort((a, b) => (b.unread || 0) - (a.unread || 0) || byDist(a, b));
+  else sorted.sort(byDist);
+  return sorted;
+}
+
 function filtersNarrowing() {
+  if (sourceValue() || searchValue()) return true;
   const state = serverFilterState();
   if (state.photo || state.online) return true;
   if (state.ageMin != null || state.ageMax != null) return true;
@@ -2009,6 +2470,7 @@ function syncFilters() {
   btn.hidden = !onGrid;
   btn.classList.toggle("on", onGrid && filtersOpen);
   document.getElementById("filterDot").hidden = !filtersNarrowing();
+  paintFilterExtras();
 }
 
 function displayHeightToCm(value) {
@@ -2110,6 +2572,9 @@ function saveFilters() {
   state.heightMaxText = document.getElementById("filterHeightMax").value;
   state.weightMinText = document.getElementById("filterWeightMin").value;
   state.weightMaxText = document.getElementById("filterWeightMax").value;
+  state.source = sourceValue();
+  state.sort = document.getElementById("filterSort").value;
+  state.search = document.getElementById("filterSearch").value;
   localStorage.setItem(FILTER_KEY, JSON.stringify(state));
 }
 
@@ -2120,6 +2585,9 @@ function restoreFilters() {
   document.getElementById("filterPhoto").checked = saved.photo !== false;
   document.getElementById("filterOnline").checked = !!saved.online;
   document.getElementById("filterDistance").value = saved.distance || "";
+  setSource(saved.source || "");
+  document.getElementById("filterSort").value = saved.sort || "distance";
+  document.getElementById("filterSearch").value = saved.search || "";
   let ageMin = AGE_LO;
   let ageMax = AGE_HI;
   if (saved.ageLo != null || saved.ageHi != null) {
@@ -2175,7 +2643,11 @@ function visibleCards() {
   const bodies = chosen("filterBody");
   const positions = chosen("filterPosition");
   const tribes = chosen("filterTribe");
-  return cards.filter((card) => {
+  const source = sourceValue();
+  const q = searchValue();
+  return sortCards(cards.filter((card) => {
+    if (source && (card.source || "sniffies") !== source) return false;
+    if (q && !String(card.name || "").toLowerCase().includes(q)) return false;
     if (photoOnly && !card.photo) return false;
     if (onlineOnly && !card.online) return false;
     if (!rangeOk(card, card.age, age.min, age.max, ["ageMin", "ageMax"])) return false;
@@ -2186,12 +2658,13 @@ function visibleCards() {
     if (!multiOk(card, card.position, positions, "positions")) return false;
     if (!multiOk(card, card.tags, tribes, "tribes")) return false;
     return true;
-  });
+  }));
 }
 
 function renderGrid() {
   gridEl.replaceChildren();
   const shown = visibleCards();
+  document.getElementById("filterCount").textContent = cards.length ? "Showing " + shown.length + " of " + cards.length : "";
   if (!shown.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
@@ -2258,10 +2731,96 @@ document.addEventListener("click", (event) => {
   if (!filtersOpen) return;
   const panel = document.getElementById("filters");
   const btn = document.getElementById("filterBtn");
+  if (!event.target.isConnected) return;
   if (panel.contains(event.target) || btn.contains(event.target)) return;
   filtersOpen = false;
   syncFilters();
 });
+// Resize floating panels from any corner; each panel's size sticks between visits.
+function makeCornerResizable(panel, storeKey, opts) {
+  const MIN_W = 320, MIN_H = 220;
+  const fixed = !!(opts && opts.fixed);
+  const hostRect = () => fixed
+    ? { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
+    : panel.parentElement.getBoundingClientRect();
+  function fix() {
+    if (panel.classList.contains("sized")) return;
+    const box = panel.getBoundingClientRect();
+    const host = hostRect();
+    panel.classList.add("sized");
+    panel.style.right = "auto";
+    panel.style.left = (box.left - host.left) + "px";
+    panel.style.top = (box.top - host.top) + "px";
+    panel.style.width = box.width + "px";
+    panel.style.height = box.height + "px";
+  }
+  function clampToHost() {
+    if (!panel.classList.contains("sized")) return;
+    const host = hostRect();
+    const w = Math.min(parseFloat(panel.style.width) || MIN_W, host.width);
+    const h = Math.min(parseFloat(panel.style.height) || MIN_H, host.height);
+    const left = Math.min(Math.max(0, parseFloat(panel.style.left) || 0), Math.max(0, host.width - w));
+    const top = Math.min(Math.max(0, parseFloat(panel.style.top) || 0), Math.max(0, host.height - h));
+    Object.assign(panel.style, { left: left + "px", top: top + "px", width: w + "px", height: h + "px" });
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem(storeKey) || "null");
+    if (saved && saved.width) {
+      panel.classList.add("sized");
+      panel.style.right = "auto";
+      Object.assign(panel.style, saved);
+      clampToHost();
+    }
+  } catch (err) {}
+  let op = null;
+  panel.querySelectorAll(":scope > .corner").forEach((handle) => {
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      fix();
+      const host = hostRect();
+      op = {
+        c: handle.dataset.c, x: event.clientX, y: event.clientY,
+        left: parseFloat(panel.style.left), top: parseFloat(panel.style.top),
+        w: panel.offsetWidth, h: panel.offsetHeight, hostW: host.width, hostH: host.height,
+      };
+      panel.classList.add("resizing");
+      handle.setPointerCapture(event.pointerId);
+    });
+    handle.addEventListener("pointermove", (event) => {
+      if (!op) return;
+      const dx = event.clientX - op.x;
+      const dy = event.clientY - op.y;
+      let { left, top, w, h } = op;
+      if (op.c.includes("e")) w = Math.min(op.hostW - left, Math.max(MIN_W, op.w + dx));
+      if (op.c.includes("s")) h = Math.min(op.hostH - top, Math.max(MIN_H, op.h + dy));
+      if (op.c.includes("w")) { w = Math.max(MIN_W, Math.min(op.w - dx, op.left + op.w)); left = op.left + op.w - w; }
+      if (op.c.includes("n")) { h = Math.max(MIN_H, Math.min(op.h - dy, op.top + op.h)); top = op.top + op.h - h; }
+      Object.assign(panel.style, { left: left + "px", top: top + "px", width: w + "px", height: h + "px" });
+    });
+    const end = () => {
+      if (!op) return;
+      op = null;
+      panel.classList.remove("resizing");
+      try {
+        localStorage.setItem(storeKey, JSON.stringify({
+          left: panel.style.left, top: panel.style.top, width: panel.style.width, height: panel.style.height,
+        }));
+      } catch (err) {}
+    };
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+    handle.addEventListener("dblclick", () => {
+      panel.classList.remove("sized");
+      for (const k of ["left", "top", "right", "width", "height"]) panel.style[k] = "";
+      try { localStorage.removeItem(storeKey); } catch (err) {}
+    });
+  });
+  window.addEventListener("resize", clampToHost);
+}
+makeCornerResizable(document.getElementById("filters"), "griffies-filter-size-v1");
+
 document.getElementById("filterClear").addEventListener("click", () => {
   document.getElementById("filterPhoto").checked = false;
   document.getElementById("filterOnline").checked = false;
@@ -2272,8 +2831,44 @@ document.getElementById("filterClear").addEventListener("click", () => {
     document.getElementById(id).value = "";
   }
   document.querySelectorAll(".filters .choice.on").forEach((btn) => btn.classList.remove("on"));
+  setSource("");
+  document.getElementById("filterSort").value = "distance";
+  document.getElementById("filterSearch").value = "";
   onFiltersChanged();
 });
+
+document.querySelectorAll("#filterSource button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    setSource(btn.dataset.val);
+    onFiltersChanged();
+  });
+});
+document.getElementById("filterSort").addEventListener("change", onFiltersChanged);
+document.getElementById("filterSearch").addEventListener("input", onFiltersChanged);
+document.querySelectorAll("#ageQuick .choice").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const already = btn.classList.contains("on");
+    document.getElementById("filterAgeMin").value = already ? String(AGE_LO) : btn.dataset.lo;
+    document.getElementById("filterAgeMax").value = already ? String(AGE_HI) : btn.dataset.hi;
+    onFiltersChanged();
+  });
+});
+document.getElementById("presetForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const input = document.getElementById("presetName");
+  const name = input.value.trim().slice(0, 24);
+  if (!name) { input.focus(); return; }
+  saveFilters();
+  const all = loadPresets();
+  try { all[name] = JSON.parse(localStorage.getItem(FILTER_KEY) || "{}"); } catch (err) { return; }
+  localStorage.setItem(PRESET_KEY, JSON.stringify(all));
+  input.value = "";
+  paintPresets();
+});
+paintPresets();
+if (chosen("filterBody").length + chosen("filterPosition").length + chosen("filterTribe").length) {
+  document.getElementById("moreFilters").open = true;
+}
 
 function faceButton(userId, photo, onClick) {
   const btn = document.createElement("button");
@@ -2706,8 +3301,89 @@ function setThreadFace(convo) {
   }
 }
 
+let currentDraft = null;
+
+function hideDraft() {
+  currentDraft = null;
+  document.getElementById("draftBar").hidden = true;
+}
+
+function showDraft(draft) {
+  if (!draft || !draft.text) { hideDraft(); return; }
+  currentDraft = draft;
+  document.getElementById("draftText").textContent = draft.text;
+  const photoEl = document.getElementById("draftPhoto");
+  photoEl.hidden = !draft.photo;
+  photoEl.textContent = draft.photo ? "They asked for pics. Suggested photo from your pool: " + draft.photo + " (not attached; send it from Photo if you want)" : "";
+  document.getElementById("draftBar").hidden = false;
+}
+
+async function loadDraftFor(convo) {
+  hideDraft();
+  const grindr = convo.source === "grindr";
+  document.getElementById("suggestBtn").hidden = grindr || !convo.conversationId;
+  if (grindr || !convo.conversationId) return;
+  try {
+    const res = await fetch("/api/auto-responder/draft?conversationId=" + encodeURIComponent(convo.conversationId));
+    const data = await res.json();
+    if (res.ok && active === convo) showDraft(data.draft);
+  } catch (err) {}
+}
+
+async function dismissDraft() {
+  if (!active || !active.conversationId) return;
+  hideDraft();
+  aiDraftIds.delete(active.conversationId);
+  try {
+    await fetch("/api/auto-responder/dismiss", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversationId: active.conversationId }),
+    });
+  } catch (err) {}
+}
+
+async function suggestReply() {
+  if (!active || !active.conversationId) return;
+  const btn = document.getElementById("suggestBtn");
+  const redo = document.getElementById("draftRedo");
+  btn.disabled = true;
+  redo.disabled = true;
+  btn.textContent = "Thinking…";
+  threadError.textContent = "";
+  const convo = active;
+  try {
+    const res = await fetch("/api/auto-responder/suggest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversationId: convo.conversationId }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Could not get a suggestion.");
+    if (active === convo) showDraft(data.draft);
+  } catch (err) {
+    threadError.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+    redo.disabled = false;
+    btn.textContent = "Suggest";
+  }
+}
+
+document.getElementById("suggestBtn").addEventListener("click", suggestReply);
+document.getElementById("draftRedo").addEventListener("click", suggestReply);
+document.getElementById("draftDismiss").addEventListener("click", dismissDraft);
+document.getElementById("draftUse").addEventListener("click", () => {
+  if (!currentDraft) return;
+  box.value = currentDraft.text;
+  box.dispatchEvent(new Event("input"));
+  box.focus();
+  dismissDraft();
+});
+
 async function openConvo(convo) {
   active = convo;
+  loadDraftFor(convo);
   knownIds = new Set();
   stickToBottom = true;
   threadView = "";
@@ -3469,22 +4145,133 @@ async function refreshAutoResponderPhotos() {
   }
 }
 
-autoResponderBtn.addEventListener("click", () => {
-  autoResponderPanel.hidden = !autoResponderPanel.hidden;
-  autoResponderBtn.classList.toggle("on", !autoResponderPanel.hidden);
-  if (!autoResponderPanel.hidden) {
-    refreshAutoResponderPhotos();
+(function aiMessageBox() {
+  const wrap = document.getElementById("autoResponderMsgWrap");
+  const msg = document.getElementById("autoResponderMsg");
+  let dismissed = "";
+  const sync = () => {
+    const text = msg.textContent.trim();
+    wrap.hidden = !text || text === dismissed;
+    wrap.classList.toggle("err", /could not|error|fail|refused|invalid/i.test(text));
+  };
+  new MutationObserver(sync).observe(msg, { childList: true, characterData: true, subtree: true });
+  document.getElementById("autoResponderMsgClose").addEventListener("click", () => {
+    dismissed = msg.textContent.trim();
+    wrap.hidden = true;
+    const badge = document.getElementById("autoResponderStatus");
+    if (badge.classList.contains("err")) {
+      badge.classList.remove("err");
+      badge.textContent = "Off";
+    }
+  });
+  sync();
+})();
+
+// Update check: on launch and every 6 hours, compare with the newest GitHub release.
+(function updateNotifier() {
+  const SKIP_KEY = "griffies-skip-version";
+  const bar = document.getElementById("updateBar");
+  async function check() {
+    let data = null;
+    try { data = await (await fetch("/api/update")).json(); } catch (err) { return; }
+    if (!data || !data.available || !data.latest) return;
+    let skipped = "";
+    try { skipped = localStorage.getItem(SKIP_KEY) || ""; } catch (err) {}
+    if (skipped === data.latest) return;
+    document.getElementById("updateLatest").textContent = data.latest;
+    document.getElementById("updateCurrent").textContent = data.current;
+    document.getElementById("updateGet").href = data.url || data.page || "#";
+    const notes = document.getElementById("updateNotes");
+    notes.href = data.page || data.url || "#";
+    notes.hidden = !data.page;
+    bar.dataset.version = data.latest;
+    bar.hidden = false;
   }
+  document.getElementById("updateLater").addEventListener("click", () => { bar.hidden = true; });
+  document.getElementById("updateSkip").addEventListener("click", () => {
+    try { localStorage.setItem(SKIP_KEY, bar.dataset.version || ""); } catch (err) {}
+    bar.hidden = true;
+  });
+  setTimeout(check, 4000);
+  setInterval(check, 6 * 60 * 60 * 1000);
+})();
+
+function setAiPanel(open) {
+  autoResponderPanel.hidden = !open;
+  autoResponderBtn.classList.toggle("on", open);
+  if (open) refreshAutoResponderPhotos();
+}
+autoResponderBtn.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setAiPanel(autoResponderPanel.hidden);
 });
+document.getElementById("autoResponderClose").addEventListener("click", () => setAiPanel(false));
+document.addEventListener("click", (event) => {
+  if (autoResponderPanel.hidden || !event.target.isConnected) return;
+  if (autoResponderPanel.contains(event.target) || autoResponderBtn.contains(event.target)) return;
+  setAiPanel(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !autoResponderPanel.hidden) setAiPanel(false);
+});
+makeCornerResizable(autoResponderPanel, "griffies-ai-panel-size-v1", { fixed: true });
+let aiDraftIds = new Set();
+
+function segValue(id) {
+  const on = document.querySelector("#" + id + " button.on");
+  return on ? on.dataset.val : "";
+}
+function setSeg(id, val) {
+  document.querySelectorAll("#" + id + " button").forEach((b) => b.classList.toggle("on", b.dataset.val === val));
+}
+function paintAiPanel() {
+  const mode = segValue("aiMode");
+  const provider = segValue("aiProvider");
+  document.getElementById("aiRisk").hidden = mode !== "auto";
+  document.getElementById("aiModeHint").textContent = mode === "auto"
+    ? "Replies go out automatically, 15 seconds after a new message, within your limits."
+    : "New messages get a suggested reply in the chat. You edit it and press Send.";
+  document.getElementById("aiBedrockFields").hidden = provider !== "bedrock";
+  document.getElementById("aiWorkerFields").hidden = provider !== "worker";
+  document.getElementById("aiOpenaiFields").hidden = provider !== "openai";
+  document.getElementById("aiKeyState").hidden = provider !== "bedrock";
+  document.getElementById("autoResponderModel").placeholder =
+    provider === "worker" ? "@cf/meta/llama-3.1-8b-instruct"
+    : provider === "openai" ? "model name from your provider (required)"
+    : "us.anthropic.claude-haiku-5-5";
+}
+["aiMode", "aiProvider"].forEach((id) => {
+  document.querySelectorAll("#" + id + " button").forEach((b) => b.addEventListener("click", () => {
+    setSeg(id, b.dataset.val);
+    paintAiPanel();
+  }));
+});
+
+function paintAiStatus(data) {
+  const el = document.getElementById("autoResponderStatus");
+  el.classList.remove("live", "err");
+  if (data.lastError && data.enabled) { el.textContent = "Error"; el.classList.add("err"); }
+  else if (data.enabled) { el.textContent = data.mode === "auto" ? "Auto-sending" : "Drafting"; el.classList.add("live"); }
+  else el.textContent = "Off";
+  autoResponderBtn.textContent = data.draftCount ? "AI Reply · " + data.draftCount : "AI Reply";
+  aiDraftIds = new Set(data.draftIds || []);
+}
+
 function autoResponderNote(data) {
-  if (data.lastError) return data.lastError;
+  if (data.lastError && data.enabled) return data.lastError;
   let base = "";
   if (data.enabled && data.seeded) {
-    base = "Auto-responder is watching incoming chats.";
+    base = data.mode === "auto" ? "Watching chats and auto-sending replies." : "Watching chats. Drafts appear inside each chat.";
   } else if (data.enabled) {
     base = "First check will record existing chats and stay quiet.";
+  } else if (data.provider === "openai" && !data.openaiKeySet) {
+    base = "Paste your API key and a model name, then Save.";
+  } else if (data.provider === "bedrock" && !data.bedrockKeySet) {
+    base = "Paste a Bedrock API key, then Save. You can still tap Suggest in a chat once the key is saved.";
+  } else if (data.mode === "auto" && !data.acceptTerms) {
+    base = "Auto-send needs the confirmation box ticked.";
   } else {
-    base = "Add the Worker URL/key, accept the risk, then Save.";
+    base = "Turn on Watch chats and Save.";
   }
   if (data.enabled && data.targetMode === "selected" && Array.isArray(data.targets)) {
     base += ` ${data.targets.length} chat${data.targets.length === 1 ? "" : "s"} selected.`;
@@ -3496,7 +4283,17 @@ async function loadAutoResponder() {
   const res = await fetch("/api/auto-responder/settings");
   const data = await res.json();
   if (!res.ok) return;
-  document.getElementById("autoResponderOn").checked = !!data.enabled;
+  document.getElementById("autoResponderOn").checked = !!data.enabledSetting;
+  setSeg("aiMode", data.mode || "draft");
+  setSeg("aiProvider", data.provider || "bedrock");
+  document.getElementById("autoResponderRegion").value = data.bedrockRegion || "us-east-1";
+  document.getElementById("autoResponderOpenaiBase").value = data.openaiBase || "https://api.openai.com/v1";
+  document.getElementById("autoResponderOpenaiKey").placeholder = data.openaiKeySet ? "saved, leave empty to keep" : "sk-…";
+  document.getElementById("aiKeyState").textContent = data.bedrockKeySet
+    ? (data.bedrockKeyFromEnv ? "Using AWS_BEARER_TOKEN_BEDROCK from the environment." : "A Bedrock key is saved. Leave the field empty to keep it.")
+    : "No Bedrock key yet. Create one in the Bedrock console under API keys.";
+  paintAiPanel();
+  paintAiStatus(data);
   document.getElementById("autoResponderUrl").value = data.workerUrl || "";
   document.getElementById("autoResponderModel").value = data.model || "";
   document.getElementById("autoResponderPrompt").value = data.prompt || "";
@@ -3514,6 +4311,12 @@ autoResponderPanel.addEventListener("submit", async (event) => {
   document.getElementById("autoResponderMsg").textContent = "Saving…";
   const body = {
     enabled: document.getElementById("autoResponderOn").checked,
+    mode: segValue("aiMode"),
+    provider: segValue("aiProvider"),
+    bedrockRegion: document.getElementById("autoResponderRegion").value,
+    bedrockKey: document.getElementById("autoResponderBedrockKey").value,
+    openaiBase: document.getElementById("autoResponderOpenaiBase").value,
+    openaiKey: document.getElementById("autoResponderOpenaiKey").value,
     workerUrl: document.getElementById("autoResponderUrl").value,
     key: document.getElementById("autoResponderKey").value,
     model: document.getElementById("autoResponderModel").value,
@@ -3531,6 +4334,8 @@ autoResponderPanel.addEventListener("submit", async (event) => {
   const data = await res.json();
   if (res.ok) {
     document.getElementById("autoResponderKey").value = "";
+    document.getElementById("autoResponderBedrockKey").value = "";
+    document.getElementById("autoResponderOpenaiKey").value = "";
     await loadAutoResponder();
   } else {
     document.getElementById("autoResponderMsg").textContent = data.error || "Could not save.";
@@ -3644,23 +4449,100 @@ let mapPoint = null;
 let mapMode = "pin";
 let mapDirty = false;
 let mapHome = null;
-let leafletLoading = null;
+let mapLibLoading = null;
 
-function loadLeaflet() {
-  if (window.L) return Promise.resolve();
-  if (leafletLoading) return leafletLoading;
-  leafletLoading = new Promise((resolve, reject) => {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = "/vendor/leaflet.css";
-    document.head.append(link);
-    const script = document.createElement("script");
-    script.src = "/vendor/leaflet.js";
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("The map failed to load."));
-    document.head.append(script);
+// Map style: your own Amazon Location key if configured (local-config.json or GRIFFIES_AWS_MAP_KEY),
+// otherwise a free dark raster basemap so shared builds never use someone else's AWS account.
+async function mapStyle() {
+  let cfg = {};
+  try { cfg = await (await fetch("/api/app-config")).json(); } catch (err) {}
+  if (cfg.awsMapKey) {
+    const region = cfg.awsMapRegion || "us-east-1";
+    return "https://maps.geo." + region + ".amazonaws.com/v2/styles/Monochrome/descriptor?color-scheme=Dark&key=" + encodeURIComponent(cfg.awsMapKey);
+  }
+  return {
+    version: 8,
+    sources: {
+      dark: {
+        type: "raster",
+        tiles: ["a", "b", "c", "d"].map((sub) => "https://" + sub + ".basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"),
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: "© OpenStreetMap contributors © CARTO",
+      },
+    },
+    layers: [
+      { id: "bg", type: "background", paint: { "background-color": "#0b0b0b" } },
+      { id: "dark", type: "raster", source: "dark", paint: { "raster-saturation": -1, "raster-contrast": 0.1 } },
+    ],
+  };
+}
+
+function loadMapLib() {
+  if (window.maplibregl) return Promise.resolve();
+  if (mapLibLoading) return mapLibLoading;
+  mapLibLoading = new Promise((resolve, reject) => {
+    const CDN = "https://unpkg.com/maplibre-gl@4.7.1/dist/";
+    const load = (base, onFail) => {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = base + "maplibre-gl.css";
+      document.head.append(link);
+      const script = document.createElement("script");
+      script.src = base + "maplibre-gl.js";
+      script.onload = () => resolve();
+      script.onerror = () => { link.remove(); script.remove(); onFail(); };
+      document.head.append(script);
+    };
+    load("/vendor/", () => load(CDN, () => reject(new Error("The map failed to load."))));
   });
-  return leafletLoading;
+  return mapLibLoading;
+}
+
+// Griffies night theme: near-black land, deep blue-black water, roads glowing in the brand yellow.
+function themeMap(map) {
+  const BG = "#0b0b0b", LAND = "#111111", WATER = "#0a1118", PARK = "#0f140f", BUILD = "#161616";
+  const set = (id, prop, val) => { try { map.setPaintProperty(id, prop, val); } catch (e) {} };
+  for (const layer of map.getStyle().layers || []) {
+    const id = layer.id;
+    const key = (id + " " + (layer["source-layer"] || "")).toLowerCase();
+    if (layer.type === "background") { set(id, "background-color", BG); continue; }
+    if (layer.type === "fill") {
+      if (/water|ocean|sea|lake|river/.test(key)) set(id, "fill-color", WATER);
+      else if (/park|green|wood|forest|grass|golf|cemetery/.test(key)) set(id, "fill-color", PARK);
+      else if (/building/.test(key)) { set(id, "fill-color", BUILD); set(id, "fill-outline-color", "#1e1e1e"); }
+      else set(id, "fill-color", LAND);
+      continue;
+    }
+    if (layer.type === "line") {
+      if (/casing|shadow/.test(key)) { set(id, "line-color", BG); continue; }
+      if (/water|river|stream|canal/.test(key)) set(id, "line-color", "#10202c");
+      else if (/boundary|admin|border/.test(key)) set(id, "line-color", "#3a3a3a");
+      else if (/motorway|trunk/.test(key)) { set(id, "line-color", "#ffd200"); set(id, "line-opacity", 0.8); }
+      else if (/primary/.test(key)) { set(id, "line-color", "#c9a600"); set(id, "line-opacity", 0.55); }
+      else if (/secondary|tertiary/.test(key)) { set(id, "line-color", "#6b5a00"); set(id, "line-opacity", 0.55); }
+      else if (/rail/.test(key)) { set(id, "line-color", "#2a2a2a"); }
+      else if (/road|street|path|minor|service|bridge|tunnel/.test(key)) { set(id, "line-color", "#2b2716"); set(id, "line-opacity", 0.8); }
+      continue;
+    }
+    if (layer.type === "symbol") {
+      set(id, "text-color", /place|city|town|country|state|locality/.test(key) ? "#f5f5f5" : "#8a8a8a");
+      set(id, "text-halo-color", BG);
+      set(id, "text-halo-width", 1.4);
+      set(id, "icon-opacity", 0.6);
+    }
+  }
+}
+
+function makePinEl() {
+  const el = document.createElement("div");
+  el.className = "map-pin";
+  el.innerHTML = '<svg viewBox="0 0 200 200" aria-hidden="true"><path d="M100 190 C70 144 44 118 44 84 A56 56 0 0 1 156 84 C156 118 130 144 100 190 Z" fill="#ffd200"></path><g fill="none" stroke="#0b0b0b" stroke-linecap="round"><path d="M70 98 Q98 94 128 60" stroke-width="12"></path><path d="M80 116 Q106 110 130 86" stroke-width="11"></path><path d="M92 132 Q112 126 128 110" stroke-width="10"></path></g></svg>';
+  return el;
+}
+
+function mapGo(lat, lng, zoom) {
+  if (mapObj) mapObj.jumpTo({ center: [lng, lat], zoom: zoom });
 }
 
 function paintMapReadout() {
@@ -3679,12 +4561,16 @@ function moveMapPin(lat, lng, dirty) {
   mapPoint = { lat: lat, lng: lng };
   mapDirty = dirty;
   if (!mapMarker) {
-    mapMarker = L.marker([lat, lng], {
-      icon: L.divIcon({ className: "map-pin", iconSize: [18, 18], iconAnchor: [9, 9] }),
-      keyboard: false,
-    }).addTo(mapObj);
+    mapMarker = new maplibregl.Marker({ element: makePinEl(), anchor: "bottom", draggable: true })
+      .setLngLat([lng, lat])
+      .addTo(mapObj);
+    mapMarker.on("dragend", () => {
+      const p = mapMarker.getLngLat();
+      mapMode = "pin";
+      moveMapPin(p.lat, p.lng, true);
+    });
   } else {
-    mapMarker.setLatLng([lat, lng]);
+    mapMarker.setLngLat([lng, lat]);
   }
   paintMapReadout();
 }
@@ -3694,25 +4580,34 @@ async function openMap() {
   mapResults.hidden = true;
   mapResults.replaceChildren();
   mapSheet.hidden = false;
-  await loadLeaflet();
+  await loadMapLib();
   const res = await fetch("/api/location");
   const data = await requireOk(res);
   if (!res.ok) throw new Error(data.error || "Could not load the map.");
   mapHome = data.home || null;
   document.getElementById("mapHome").disabled = !mapHome;
+  const hasPoint = typeof data.lat === "number" && typeof data.lng === "number";
   if (!mapObj) {
-    mapObj = L.map("mapCanvas", { zoomControl: true });
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: "&copy; OpenStreetMap",
-    }).addTo(mapObj);
+    mapObj = new maplibregl.Map({
+      container: "mapCanvas",
+      style: await mapStyle(),
+      center: hasPoint ? [data.lng, data.lat] : [-98.5, 39.8],
+      zoom: hasPoint ? 12 : 3.5,
+      attributionControl: { compact: true },
+      dragRotate: false,
+    });
+    mapObj.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    mapObj.on("style.load", () => themeMap(mapObj));
+    mapObj.on("error", (event) => {
+      const status = event && event.error && event.error.status;
+      if (status === 403) mapError.textContent = "The AWS map key was refused. Check the key's allowed referers.";
+    });
     mapObj.on("click", (event) => {
       mapMode = "pin";
-      moveMapPin(event.latlng.lat, event.latlng.lng, true);
+      moveMapPin(event.lngLat.lat, event.lngLat.lng, true);
     });
   }
-  const hasPoint = typeof data.lat === "number" && typeof data.lng === "number";
-  mapObj.setView(hasPoint ? [data.lat, data.lng] : [39.8, -98.5], hasPoint ? 12 : 4);
+  mapGo(hasPoint ? data.lat : 39.8, hasPoint ? data.lng : -98.5, hasPoint ? 12 : 3.5);
   if (hasPoint) {
     mapMode = data.pinned ? (data.mode === "live" ? "live" : "pin") : "home";
     moveMapPin(data.lat, data.lng, false);
@@ -3722,8 +4617,16 @@ async function openMap() {
     paintMapReadout();
   }
   document.getElementById("mapDot").hidden = !data.pinned;
-  requestAnimationFrame(() => mapObj.invalidateSize());
+  requestAnimationFrame(() => mapObj.resize());
 }
+
+const moreMenu = document.getElementById("moreMenu");
+moreMenu.querySelector(".more-list").addEventListener("click", (event) => {
+  if (event.target.closest("button")) moreMenu.open = false;
+});
+document.addEventListener("click", (event) => {
+  if (moreMenu.open && !moreMenu.contains(event.target)) moreMenu.open = false;
+});
 
 document.getElementById("mapBtn").addEventListener("click", () => {
   openMap().catch((err) => {
@@ -3745,7 +4648,7 @@ document.getElementById("mapLive").addEventListener("click", () => {
   navigator.geolocation.getCurrentPosition((pos) => {
     mapMode = "live";
     moveMapPin(pos.coords.latitude, pos.coords.longitude, true);
-    mapObj.setView([pos.coords.latitude, pos.coords.longitude], 14);
+    mapGo(pos.coords.latitude, pos.coords.longitude, 14);
   }, () => {
     mapError.textContent = "Location permission was denied.";
   }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
@@ -3759,7 +4662,7 @@ document.getElementById("mapHome").addEventListener("click", () => {
   }
   mapMode = "home";
   moveMapPin(mapHome.lat, mapHome.lng, true);
-  mapObj.setView([mapHome.lat, mapHome.lng], 12);
+  mapGo(mapHome.lat, mapHome.lng, 12);
   mapReadout.textContent = mapHome.lat.toFixed(5) + ", " + mapHome.lng.toFixed(5) + " · account location, not saved";
 });
 
@@ -3821,7 +4724,7 @@ document.getElementById("mapSearch").addEventListener("submit", async (event) =>
       btn.addEventListener("click", () => {
         mapMode = "pin";
         moveMapPin(row.lat, row.lng, true);
-        mapObj.setView([row.lat, row.lng], 13);
+        mapGo(row.lat, row.lng, 13);
         mapResults.hidden = true;
       });
       mapResults.append(btn);

@@ -34,7 +34,96 @@ from pathlib import Path
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("SNIFFIES_PORT", "8765"))
-STATIC = Path(__file__).resolve().parent / "static"
+import sys as _sys
+
+APP_DIR = Path(getattr(_sys, "_MEIPASS", Path(__file__).resolve().parent))
+STATIC = Path(os.environ.get("GRIFFIES_STATIC") or (APP_DIR / "static"))
+# Local, untracked settings (map key etc). Never bundled into desktop builds.
+_LOCAL_CONFIG_PATHS = [
+    Path(__file__).resolve().parent / "local-config.json",
+    Path.home() / ".config" / "sniffies-messages" / "app.json",
+    APP_DIR / "bundled-config.json",  # written by CI from a repo secret; desktop builds only
+]
+
+
+def _local_config() -> dict:
+    for path in _LOCAL_CONFIG_PATHS:
+        try:
+            data = json.loads(path.read_text())
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            continue
+    return {}
+
+
+UPDATE_REPO = os.environ.get("GRIFFIES_UPDATE_REPO", "mitchellorion/Griffies-Mashapp")
+
+
+def app_version() -> str:
+    for path in (APP_DIR / "VERSION", Path(__file__).resolve().parent / "VERSION"):
+        try:
+            v = path.read_text().strip()
+            if v:
+                return v
+        except Exception:
+            continue
+    return "0.0.0-dev"
+
+
+def _version_tuple(v: str) -> tuple:
+    nums = re.findall(r"\d+", str(v).split("-")[0])
+    return tuple(int(n) for n in nums[:3]) + (0,) * (3 - len(nums[:3]))
+
+
+_update_cache: dict = {"at": 0.0, "data": None}
+
+
+def update_check() -> dict:
+    """Compare this build to the newest GitHub release. Cached for an hour; never raises."""
+    current = app_version()
+    base = {"current": current, "latest": None, "available": False, "url": None, "notes": ""}
+    now = time.time()
+    if _update_cache["data"] is not None and now - _update_cache["at"] < 3600:
+        data = dict(_update_cache["data"])
+        data["current"] = current
+        data["available"] = bool(data.get("latest")) and _version_tuple(data["latest"]) > _version_tuple(current)
+        return data
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "griffies-update-check"},
+    )
+    try:
+        with _direct_opener.open(request, timeout=8) as response:
+            rel = json.loads(response.read(200000).decode() or "{}")
+    except Exception:
+        return base
+    tag = str(rel.get("tag_name") or "").lstrip("vV")
+    if not tag:
+        return base
+    assets = rel.get("assets") or []
+    want = ".exe" if _sys.platform.startswith("win") else ".dmg"
+    arch = "arm64" if "arm" in (os.uname().machine if hasattr(os, "uname") else "").lower() else "x64"
+    direct = next((a.get("browser_download_url") for a in assets if str(a.get("name", "")).endswith(want) and arch in str(a.get("name", ""))), None)
+    direct = direct or next((a.get("browser_download_url") for a in assets if str(a.get("name", "")).endswith(want)), None)
+    data = {
+        "current": current,
+        "latest": tag,
+        "url": direct or rel.get("html_url"),
+        "page": rel.get("html_url"),
+        "notes": str(rel.get("body") or "")[:600],
+    }
+    _update_cache.update(at=now, data=data)
+    data = dict(data)
+    data["available"] = _version_tuple(tag) > _version_tuple(current)
+    return data
+
+
+def app_config_public() -> dict:
+    cfg = _local_config()
+    key = str(os.environ.get("GRIFFIES_AWS_MAP_KEY") or cfg.get("awsMapKey") or "").strip()
+    region = str(os.environ.get("GRIFFIES_AWS_MAP_REGION") or cfg.get("awsMapRegion") or "us-east-1").strip()
+    return {"awsMapKey": key, "awsMapRegion": region, "desktop": bool(getattr(_sys, "frozen", False)), "version": app_version()}
 API_HOST_DEFAULT = "uswapi2.sniffies.com"
 ALEXA_CONFIG = Path(
     os.environ.get(
@@ -4161,8 +4250,18 @@ def _match_word(text: str, words: list[str]) -> str | None:
     return None
 
 
+_BEDROCK_DEFAULT_MODEL = "us.anthropic.claude-haiku-5-5"
+_BEDROCK_DEFAULT_REGION = "us-east-1"
+_BEDROCK_REGION_RE = re.compile(r"^[a-z]{2}(-gov)?-[a-z]+-[0-9]$")
+
 _AUTO_RESPONDER_DEFAULTS = {
     "enabled": False,
+    "provider": "bedrock",
+    "mode": "draft",
+    "bedrockRegion": _BEDROCK_DEFAULT_REGION,
+    "bedrockKey": "",
+    "openaiBase": "https://api.openai.com/v1",
+    "openaiKey": "",
     "workerUrl": "",
     "key": "",
     "model": "",
@@ -4207,6 +4306,8 @@ def _set_auto_responder_status(
 
 def load_auto_responder() -> dict:
     data = dict(_AUTO_RESPONDER_DEFAULTS)
+    if getattr(_sys, "frozen", False):
+        data["provider"] = "openai"
     try:
         raw = json.loads(_AUTO_RESPONDER_CONFIG.read_text())
     except Exception:
@@ -4216,6 +4317,8 @@ def load_auto_responder() -> dict:
     for key in _AUTO_RESPONDER_DEFAULTS:
         if key in raw:
             data[key] = raw[key]
+    if "provider" not in raw and getattr(_sys, "frozen", False):
+        data["provider"] = "openai"
     if data.get("targetMode") == "all":
         data["targetMode"] = "selected"
         _save_auto_responder(data)
@@ -4230,15 +4333,16 @@ def load_state_auto_responder() -> dict:
     try:
         raw = json.loads(_AUTO_RESPONDER_STATE.read_text())
     except Exception:
-        return {"seeded": False, "last": {}, "replies": {}, "pending": {}, "photoLast": {}, "hourStart": 0, "hourCount": 0}
+        return {"seeded": False, "last": {}, "replies": {}, "pending": {}, "photoLast": {}, "drafts": {}, "hourStart": 0, "hourCount": 0}
     if not isinstance(raw, dict):
-        return {"seeded": False, "last": {}, "replies": {}, "pending": {}, "photoLast": {}, "hourStart": 0, "hourCount": 0}
+        return {"seeded": False, "last": {}, "replies": {}, "pending": {}, "photoLast": {}, "drafts": {}, "hourStart": 0, "hourCount": 0}
     return {
         "seeded": bool(raw.get("seeded")),
         "last": raw.get("last") if isinstance(raw.get("last"), dict) else {},
         "replies": raw.get("replies") if isinstance(raw.get("replies"), dict) else {},
         "pending": raw.get("pending") if isinstance(raw.get("pending"), dict) else {},
         "photoLast": raw.get("photoLast") if isinstance(raw.get("photoLast"), dict) else {},
+        "drafts": raw.get("drafts") if isinstance(raw.get("drafts"), dict) else {},
         "hourStart": raw.get("hourStart") or 0,
         "hourCount": raw.get("hourCount") or 0,
     }
@@ -4251,10 +4355,38 @@ def _save_state_auto_responder(state: dict) -> None:
         "replies": state.get("replies") or {},
         "pending": state.get("pending") or {},
         "photoLast": state.get("photoLast") or {},
+        "drafts": state.get("drafts") or {},
         "hourStart": state.get("hourStart") or 0,
         "hourCount": state.get("hourCount") or 0,
     }
     _write_private(_AUTO_RESPONDER_STATE, clean)
+
+
+def _bedrock_key(cfg: dict) -> str:
+    return str(cfg.get("bedrockKey") or os.environ.get("AWS_BEARER_TOKEN_BEDROCK") or "").strip()
+
+
+def _ai_ready(cfg: dict) -> bool:
+    """True when the chosen provider has what it needs to generate text."""
+    provider = str(cfg.get("provider") or "bedrock")
+    if provider == "worker":
+        return bool(cfg.get("workerUrl") and cfg.get("key"))
+    if provider == "openai":
+        return bool(cfg.get("openaiKey") and str(cfg.get("model") or "").strip())
+    return bool(_bedrock_key(cfg))
+
+
+def _auto_mode(cfg: dict) -> str:
+    return "auto" if str(cfg.get("mode") or "draft") == "auto" else "draft"
+
+
+def _responder_on(cfg: dict) -> bool:
+    """Watching runs when enabled and configured. Auto-send also needs the risk box."""
+    if not (cfg.get("enabled") and _ai_ready(cfg)):
+        return False
+    if _auto_mode(cfg) == "auto" and not cfg.get("acceptTerms"):
+        return False
+    return True
 
 
 def auto_responder_public() -> dict:
@@ -4262,14 +4394,22 @@ def auto_responder_public() -> dict:
     state = load_state_auto_responder()
     with _auto_responder_status_lock:
         status = dict(_auto_responder_status)
-    enabled = bool(
-        cfg.get("enabled")
-        and cfg.get("workerUrl")
-        and cfg.get("key")
-        and cfg.get("acceptTerms")
-    )
+    enabled = _responder_on(cfg)
+    drafts = state.get("drafts") or {}
     return {
         "enabled": enabled,
+        "enabledSetting": bool(cfg.get("enabled")),
+        "provider": str(cfg.get("provider") or "bedrock"),
+        "mode": _auto_mode(cfg),
+        "bedrockRegion": str(cfg.get("bedrockRegion") or _BEDROCK_DEFAULT_REGION),
+        "bedrockKeySet": bool(_bedrock_key(cfg)),
+        "bedrockKeyFromEnv": bool(not cfg.get("bedrockKey") and os.environ.get("AWS_BEARER_TOKEN_BEDROCK")),
+        "workerKeySet": bool(cfg.get("key")),
+        "openaiBase": str(cfg.get("openaiBase") or "https://api.openai.com/v1"),
+        "openaiKeySet": bool(cfg.get("openaiKey")),
+        "defaultModel": _BEDROCK_DEFAULT_MODEL,
+        "draftCount": len(drafts),
+        "draftIds": sorted(drafts.keys())[:200],
         "workerUrl": str(cfg.get("workerUrl") or ""),
         "model": str(cfg.get("model") or ""),
         "prompt": str(cfg.get("prompt") or ""),
@@ -4290,6 +4430,35 @@ def update_auto_responder(body: dict) -> dict:
     cfg = load_auto_responder()
     if "enabled" in body:
         cfg["enabled"] = bool(body.get("enabled"))
+    if "provider" in body:
+        prov = str(body.get("provider"))
+        cfg["provider"] = prov if prov in ("worker", "openai") else "bedrock"
+    if "openaiBase" in body:
+        base = str(body.get("openaiBase") or "").strip().rstrip("/") or "https://api.openai.com/v1"
+        if not base.startswith(("https://", "http://127.0.0.1", "http://localhost")) or len(base) > 300:
+            raise ApiError(400, "Base URL must be https:// (or a local http://127.0.0.1 server).")
+        cfg["openaiBase"] = base
+    if "openaiKey" in body:
+        okey = str(body.get("openaiKey") or "").strip()
+        if okey:
+            if len(okey) < 8 or len(okey) > 1000 or any(c.isspace() for c in okey):
+                raise ApiError(400, "That API key doesn't look right.")
+            cfg["openaiKey"] = okey
+    if "mode" in body:
+        cfg["mode"] = "auto" if str(body.get("mode")) == "auto" else "draft"
+    if "bedrockRegion" in body:
+        region = str(body.get("bedrockRegion") or "").strip() or _BEDROCK_DEFAULT_REGION
+        if not _BEDROCK_REGION_RE.match(region):
+            raise ApiError(400, "That doesn't look like an AWS region (e.g. us-east-1).")
+        cfg["bedrockRegion"] = region
+    if "bedrockKey" in body:
+        bkey = str(body.get("bedrockKey") or "").strip()
+        if bkey:
+            if len(bkey) < 20 or len(bkey) > 4000 or any(c.isspace() for c in bkey):
+                raise ApiError(400, "That Bedrock API key doesn't look right.")
+            cfg["bedrockKey"] = bkey
+    if body.get("clearBedrockKey"):
+        cfg["bedrockKey"] = ""
     if "targetMode" in body:
         mode = str(body.get("targetMode") or "all")
         if mode not in ("all", "selected"):
@@ -4348,12 +4517,7 @@ def update_auto_responder(body: dict) -> dict:
     if "acceptTerms" in body:
         cfg["acceptTerms"] = bool(body.get("acceptTerms"))
 
-    effective_enabled = bool(
-        cfg.get("enabled")
-        and cfg.get("workerUrl")
-        and cfg.get("key")
-        and cfg.get("acceptTerms")
-    )
+    effective_enabled = _responder_on(cfg)
     if not effective_enabled:
         _auto_responder_disable()
     _save_auto_responder(cfg)
@@ -4382,7 +4546,7 @@ def update_auto_responder_target(conversation_id: str, enabled: bool) -> dict:
     state["pending"].pop(cid, None)
     _save_state_auto_responder(state)
     _set_auto_responder_status(error="")
-    if bool(cfg.get("enabled") and cfg.get("workerUrl") and cfg.get("key") and cfg.get("acceptTerms")):
+    if _responder_on(cfg):
         _auto_responder_wake.set()
     return auto_responder_public()
 
@@ -4409,10 +4573,18 @@ _PHOTO_REQUEST_RE = re.compile(
 )
 
 
+_PHOTO_REFUSAL_RE = re.compile(
+    r"\b(no|not|don'?t|dont|never|stop|without)\b[^.!?]{0,20}\b(pic|pics|pix|photo|photos|picture|pictures|nude|nudes)\b",
+    re.IGNORECASE,
+)
+
+
 def _is_photo_request(text: str) -> bool:
     if not isinstance(text, str) or not text.strip():
         return False
     lower = text.lower()
+    if _PHOTO_REFUSAL_RE.search(lower):
+        return False
     if _PHOTO_REQUEST_RE.search(lower):
         return True
     ask_words = ("send", "show", "trade", "swap", "more", "got", "have", "share", "give")
@@ -4490,6 +4662,193 @@ def _call_ai_worker(cfg: dict, messages: list[dict]) -> str:
     return reply.strip()[:2000]
 
 
+def _converse_messages(messages: list[dict]) -> list[dict]:
+    """Bedrock Converse needs user-first, strictly alternating turns."""
+    out: list[dict] = []
+    for m in messages:
+        role = "assistant" if m.get("role") == "assistant" else "user"
+        text = str(m.get("content") or "").strip()[:6000]
+        if not text:
+            continue
+        if out and out[-1]["role"] == role:
+            out[-1]["content"][0]["text"] += "\n" + text
+        else:
+            out.append({"role": role, "content": [{"text": text}]})
+    out = out[-20:]
+    while out and out[0]["role"] != "user":
+        out.pop(0)
+    return out
+
+
+def _call_bedrock(cfg: dict, messages: list[dict]) -> str:
+    key = _bedrock_key(cfg)
+    if not key:
+        raise ApiError(400, "Add a Bedrock API key first.")
+    region = str(cfg.get("bedrockRegion") or _BEDROCK_DEFAULT_REGION)
+    if not _BEDROCK_REGION_RE.match(region):
+        region = _BEDROCK_DEFAULT_REGION
+    model = str(cfg.get("model") or "").strip()
+    if not model or model.startswith("@cf/"):
+        model = _BEDROCK_DEFAULT_MODEL
+    turns = _converse_messages(messages)
+    if not turns:
+        raise ApiError(400, "Nothing to reply to.")
+    prompt = str(cfg.get("prompt") or "").strip() or _DEFAULT_AUTO_RESPONDER_PROMPT
+    payload = {
+        "system": [{"text": prompt[:4000]}],
+        "messages": turns,
+        "inferenceConfig": {"maxTokens": 256, "temperature": 0.75},
+    }
+    url = (
+        f"https://bedrock-runtime.{region}.amazonaws.com/model/"
+        + urllib.parse.quote(model, safe="")
+        + "/converse"
+    )
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": "Bearer " + key,
+            "User-Agent": "griffies/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with _direct_opener.open(request, timeout=45) as response:
+            raw = response.read(64000)
+            status = getattr(response, "status", 200)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read(4000)
+        status = exc.code
+    except Exception:
+        raise ApiError(502, "Could not reach Amazon Bedrock.")
+    try:
+        parsed = json.loads(raw.decode() or "{}")
+    except Exception:
+        parsed = {}
+    if status != 200:
+        msg = parsed.get("message") or parsed.get("Message") if isinstance(parsed, dict) else None
+        if status in (401, 403):
+            msg = "Bedrock refused the key. " + (msg or "Check the key and that it can call this model.")
+        raise ApiError(status if 400 <= status <= 599 else 502, (msg or "Bedrock returned an error.")[:300])
+    try:
+        parts = parsed["output"]["message"]["content"]
+        reply = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+    except Exception:
+        raise ApiError(502, "Bedrock returned an unexpected response.")
+    reply = re.sub(r"^\s*(user|assistant)\s*[:\-]\s*", "", reply.strip(), flags=re.IGNORECASE)
+    if not reply:
+        raise ApiError(502, "The model returned an empty reply.")
+    return reply[:2000]
+
+
+def _call_openai(cfg: dict, messages: list[dict]) -> str:
+    key = str(cfg.get("openaiKey") or "").strip()
+    model = str(cfg.get("model") or "").strip()
+    if not key or not model:
+        raise ApiError(400, "Add an API key and a model name first.")
+    base = str(cfg.get("openaiBase") or "https://api.openai.com/v1").rstrip("/")
+    prompt = str(cfg.get("prompt") or "").strip() or _DEFAULT_AUTO_RESPONDER_PROMPT
+    turns = [{"role": "system", "content": prompt[:4000]}]
+    for m in messages[-20:]:
+        text = str(m.get("content") or "").strip()[:6000]
+        if text:
+            turns.append({"role": "assistant" if m.get("role") == "assistant" else "user", "content": text})
+    request = urllib.request.Request(
+        base + "/chat/completions",
+        data=json.dumps({"model": model, "messages": turns, "max_tokens": 256, "temperature": 0.75}).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": "Bearer " + key,
+            "User-Agent": "griffies/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with _direct_opener.open(request, timeout=45) as response:
+            raw = response.read(64000)
+            status = getattr(response, "status", 200)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read(4000)
+        status = exc.code
+    except Exception:
+        raise ApiError(502, "Could not reach the AI provider.")
+    try:
+        parsed = json.loads(raw.decode() or "{}")
+    except Exception:
+        parsed = {}
+    if status != 200:
+        err = parsed.get("error") if isinstance(parsed, dict) else None
+        msg = err.get("message") if isinstance(err, dict) else (err if isinstance(err, str) else None)
+        raise ApiError(status if 400 <= status <= 599 else 502, (msg or "The AI provider returned an error.")[:300])
+    try:
+        reply = str(parsed["choices"][0]["message"]["content"] or "").strip()
+    except Exception:
+        raise ApiError(502, "The AI provider returned an unexpected response.")
+    if not reply:
+        raise ApiError(502, "The model returned an empty reply.")
+    return reply[:2000]
+
+
+def _call_ai(cfg: dict, messages: list[dict]) -> str:
+    provider = str(cfg.get("provider") or "bedrock")
+    if provider == "worker":
+        return _call_ai_worker(cfg, messages)
+    if provider == "openai":
+        return _call_openai(cfg, messages)
+    return _call_bedrock(cfg, messages)
+
+
+def _store_draft(cid: str, text: str, photo: str = "") -> dict:
+    state = load_state_auto_responder()
+    entry = {"text": text[:2000], "photo": photo, "at": time.time()}
+    state["drafts"][cid] = entry
+    if len(state["drafts"]) > 200:
+        oldest = sorted(state["drafts"].items(), key=lambda kv: kv[1].get("at") or 0)
+        for k, _ in oldest[:-200]:
+            state["drafts"].pop(k, None)
+    _save_state_auto_responder(state)
+    return entry
+
+
+def auto_responder_draft(conversation_id: str) -> dict:
+    cid = str(conversation_id or "").strip()
+    if not USER_ID_RE.match(cid):
+        raise ApiError(400, "Invalid conversation.")
+    state = load_state_auto_responder()
+    return {"draft": state["drafts"].get(cid)}
+
+
+def auto_responder_suggest(conversation_id: str) -> dict:
+    cid = str(conversation_id or "").strip()
+    if not USER_ID_RE.match(cid) or GRINDR_CONVO_RE.match(cid):
+        raise ApiError(400, "Suggestions work on Sniffies chats.")
+    cfg = load_auto_responder()
+    if not _ai_ready(cfg):
+        raise ApiError(400, "Set up AI Reply first (add an API key).")
+    thread = fetch_thread(cid, None)
+    messages = _prepare_thread_messages(thread)
+    if not messages:
+        raise ApiError(400, "There's nothing in this chat to reply to yet.")
+    if messages[-1].get("role") != "user":
+        messages.append({"role": "user", "content": "[no new message; suggest a natural follow-up]"})
+    reply = _call_ai(cfg, messages)
+    entry = _store_draft(cid, reply)
+    _auto_responder_event("draft", f"{cid[:12]}: suggested {reply[:50]}")
+    return {"draft": entry}
+
+
+def auto_responder_dismiss(conversation_id: str) -> dict:
+    cid = str(conversation_id or "").strip()
+    state = load_state_auto_responder()
+    state["drafts"].pop(cid, None)
+    _save_state_auto_responder(state)
+    return {"ok": True}
+
+
 def auto_responder_debug() -> dict:
     cfg = load_auto_responder()
     state = load_state_auto_responder()
@@ -4511,6 +4870,10 @@ def auto_responder_debug() -> dict:
             "model": cfg.get("model") or "(default)",
             "promptChars": len(str(cfg.get("prompt") or "")),
             "workerUrl": cfg.get("workerUrl"),
+            "provider": cfg.get("provider") or "bedrock",
+            "mode": _auto_mode(cfg),
+            "bedrockRegion": cfg.get("bedrockRegion"),
+            "drafts": len(state.get("drafts") or {}),
         },
         "state": {
             "signedIn": _sniffies_in(),
@@ -4537,26 +4900,27 @@ def auto_responder_debug() -> dict:
 
 def auto_responder_test() -> dict:
     cfg = load_auto_responder()
-    if not cfg.get("workerUrl") or not cfg.get("key"):
-        raise ApiError(400, "Add the Worker URL and key first.")
+    if not _ai_ready(cfg):
+        provider = str(cfg.get("provider") or "bedrock")
+        if provider == "worker":
+            raise ApiError(400, "Add the Worker URL and key first.")
+        if provider == "openai":
+            raise ApiError(400, "Add an API key and a model name first.")
+        raise ApiError(400, "Add a Bedrock API key first.")
     sample = [
-        {"role": "user", "content": "hey, what are you into?"},
+        {"role": "user", "content": "hey, what are you up to tonight?"},
     ]
-    reply = _call_ai_worker(cfg, sample)
+    reply = _call_ai(cfg, sample)
     return {"draft": reply}
 
 
 def _auto_responder_once() -> None:
     cfg = load_auto_responder()
-    enabled = bool(
-        cfg.get("enabled")
-        and cfg.get("workerUrl")
-        and cfg.get("key")
-        and cfg.get("acceptTerms")
-    )
+    enabled = _responder_on(cfg)
+    draft_mode = _auto_mode(cfg) == "draft"
     _set_auto_responder_status(enabled=enabled)
     if not enabled:
-        _auto_responder_event("tick", "off (enabled/URL/key/terms not all set)")
+        _auto_responder_event("tick", "off (needs enabled + key; auto-send also needs the risk box)")
         return
     if not _sniffies_in():
         _auto_responder_event("tick", "skipped: not signed in to Sniffies")
@@ -4682,6 +5046,24 @@ def _auto_responder_once() -> None:
             continue
         last_text = messages[-1].get("content") or ""
         photo_pool = list(cfg.get("autoResponderPhotos") or [])
+        if draft_mode:
+            try:
+                reply = _call_ai(cfg, messages)
+            except ApiError as exc:
+                _set_auto_responder_status(error=f"AI: {exc.message}")
+                _bump_tries(cid, last_at, entry, exc.message)
+                continue
+            photo = ""
+            if cfg.get("sendPhotosWhenAsked") and photo_pool and _is_photo_request(last_text):
+                photo = _pick_photo(photo_pool, (state.get("photoLast") or {}).get(cid))
+            state["drafts"][cid] = {"text": reply[:2000], "photo": photo, "at": now}
+            state["hourCount"] = int(state.get("hourCount") or 0) + 1
+            _consume(cid, last_at, entry)
+            sent += 1
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            _set_auto_responder_status(ok=f"Draft ready at {ts}.")
+            _auto_responder_event("draft", f"{cid[:12]}: {reply[:60]}")
+            continue
         if cfg.get("sendPhotosWhenAsked") and photo_pool and _is_photo_request(last_text):
             photo_last = state.get("photoLast") or {}
             chosen = _pick_photo(photo_pool, photo_last.get(cid))
@@ -4702,9 +5084,9 @@ def _auto_responder_once() -> None:
                 _bump_tries(cid, last_at, entry, exc.message)
             continue
         try:
-            reply = _call_ai_worker(cfg, messages)
+            reply = _call_ai(cfg, messages)
         except ApiError as exc:
-            _set_auto_responder_status(error=f"AI worker: {exc.message}")
+            _set_auto_responder_status(error=f"AI: {exc.message}")
             print(f"auto-responder AI failed: {exc.message}")
             _bump_tries(cid, last_at, entry, exc.message)
             continue
@@ -4728,11 +5110,11 @@ def _auto_responder_once() -> None:
     _save_state_auto_responder(state)
     _auto_responder_event(
         "tick",
-        f"{len(conversations)} chats, {len(pending)} pending, sent {sent}"
+        f"{len(conversations)} chats, {len(pending)} pending, {'drafted' if draft_mode else 'sent'} {sent}"
         + (", wake in 15s" if wake_soon else ""),
     )
     if sent:
-        print(f"auto-responder sent {sent} replies")
+        print(f"auto-responder {'drafted' if draft_mode else 'sent'} {sent} replies")
 
 
 def _auto_responder_watcher() -> None:
@@ -4970,6 +5352,12 @@ class Handler(BaseHTTPRequestHandler):
                 page = (STATIC / "index.html").read_bytes()
                 self._send(200, page, "text/html; charset=utf-8")
                 return
+            if path == "/api/update":
+                self._json(200, update_check())
+                return
+            if path == "/api/app-config":
+                self._json(200, app_config_public())
+                return
             if path == "/api/health":
                 self._json(200, {"ok": True})
                 return
@@ -4989,6 +5377,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/vendor/leaflet.css":
                 self._send(200, (STATIC / "vendor" / "leaflet.css").read_bytes(), "text/css; charset=utf-8")
+                return
+            if path == "/vendor/maplibre-gl.js":
+                self._send(200, (STATIC / "vendor" / "maplibre-gl.js").read_bytes(), "text/javascript; charset=utf-8")
+                return
+            if path == "/vendor/maplibre-gl.css":
+                self._send(200, (STATIC / "vendor" / "maplibre-gl.css").read_bytes(), "text/css; charset=utf-8")
                 return
             if path == "/logo.png":
                 self._send(200, (STATIC / "logo.png").read_bytes(), "image/png")
@@ -5022,6 +5416,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/auto-responder/settings":
                 self._json(200, auto_responder_public())
+                return
+            if path == "/api/auto-responder/draft":
+                self._json(200, auto_responder_draft((query.get("conversationId") or [""])[0]))
                 return
             if path == "/api/auto-responder/debug":
                 self._json(200, auto_responder_debug())
@@ -5252,6 +5649,12 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/auto-responder/test":
                 self._json(200, auto_responder_test())
                 return
+            if parsed.path == "/api/auto-responder/suggest":
+                self._json(200, auto_responder_suggest(str(data.get("conversationId") or "")))
+                return
+            if parsed.path == "/api/auto-responder/dismiss":
+                self._json(200, auto_responder_dismiss(str(data.get("conversationId") or "")))
+                return
             if parsed.path == "/api/auto-responder/once":
                 _auto_responder_once()
                 self._json(200, auto_responder_public())
@@ -5333,15 +5736,22 @@ class Handler(BaseHTTPRequestHandler):
             self._json(500, {"error": "Something went wrong."})
 
 
-def main() -> None:
-    os.chdir(Path(__file__).resolve().parent)
+def start_server(port: int | None = None) -> ThreadingHTTPServer:
+    """Load the session, bind, and start background watchers. Caller runs serve_forever()."""
+    if not getattr(_sys, "frozen", False):
+        os.chdir(Path(__file__).resolve().parent)
     _load_session()
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    server = ThreadingHTTPServer((HOST, port or PORT), Handler)
     server.request_queue_size = 64
     _alexa_wake.set()
     _auto_responder_wake.set()
     threading.Thread(target=_alexa_watcher, name="alexa", daemon=True).start()
     threading.Thread(target=_auto_responder_watcher, name="auto-responder", daemon=True).start()
+    return server
+
+
+def main() -> None:
+    server = start_server()
     print(f"Sniffies inbox at http://{HOST}:{PORT}")
     try:
         server.serve_forever()
