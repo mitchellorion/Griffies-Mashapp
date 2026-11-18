@@ -1,0 +1,91 @@
+name: Desktop builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Which builds to make"
+        type: choice
+        options: [mac, windows, all]
+        default: mac
+  push:
+    tags: ["v*"]
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          mac='{"os":"macos-14","name":"mac-arm64"},{"os":"macos-13","name":"mac-x64"}'
+          win='{"os":"windows-latest","name":"windows-x64"}'
+          case "${{ inputs.platform || 'all' }}" in
+            mac) list="$mac" ;;
+            windows) list="$win" ;;
+            *) list="$mac,$win" ;;
+          esac
+          echo "matrix={\"include\":[$list]}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r desktop/requirements.txt
+      - name: Install wreq (optional, for Grindr sign-in)
+        continue-on-error: true
+        run: pip install wreq
+      - name: Build
+        env:
+          # Optional: shared map key, added to the app at build time. Never committed.
+          GRIFFIES_AWS_MAP_KEY: ${{ secrets.GRIFFIES_AWS_MAP_KEY }}
+          GRIFFIES_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: pyinstaller desktop/griffies.spec --noconfirm
+
+      - name: Package .dmg
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dmg && cp -R dist/Griffies.app dmg/
+          ln -s /Applications dmg/Applications
+          cp desktop/FIRST-OPEN.txt "dmg/Read me first.txt"
+          hdiutil create -volname Griffies -srcfolder dmg -ov -format UDZO "Griffies-${{ matrix.name }}.dmg"
+      - name: Rename .exe
+        if: runner.os == 'Windows'
+        shell: bash
+        run: mv dist/Griffies.exe "Griffies-${{ matrix.name }}.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Griffies-${{ matrix.name }}
+          path: |
+            Griffies-*.dmg
+            Griffies-*.exe
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
