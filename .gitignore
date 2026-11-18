@@ -4,3 +4,13 @@ __pycache__/
 venv/
 *.log
 .DS_Store
+
+# Local secrets and desktop build output
+local-config.json
+build/
+dist/
+*.dmg
+*.exe
+desktop/bundled-config.json
+desktop/_bundled-config.json
+desktop/VERSION
