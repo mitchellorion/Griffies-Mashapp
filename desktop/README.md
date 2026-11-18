@@ -6,8 +6,8 @@ Griffies ships as a native window around the same local server: `desktop/app.py`
 
 macOS apps have to be built on a Mac and Windows apps on Windows, so the GitHub Actions workflow in `.github/workflows/desktop.yml` builds all three:
 
-- `Griffies-mac-arm64.dmg` (Apple Silicon)
-- `Griffies-mac-x64.dmg` (Intel)
+- `Griffies-mac-apple-silicon.dmg` (Apple Silicon)
+- `Griffies-mac-intel.dmg` (Intel)
 - `Griffies-windows-x64.exe`
 
 Run it from the Actions tab (**Desktop builds → Run workflow**) and download the artifacts, or push a tag like `v0.1.0` to attach them to a GitHub release.

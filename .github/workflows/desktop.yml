@@ -1,5 +1,9 @@
 name: Desktop builds
 
+env:
+  # GitHub is retiring Node 20 for actions; run every action on Node 24 now.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   workflow_dispatch:
     inputs:
@@ -20,7 +24,7 @@ jobs:
       - id: pick
         shell: bash
         run: |
-          mac='{"os":"macos-14","name":"mac-arm64"},{"os":"macos-13","name":"mac-x64"}'
+          mac='{"os":"macos-14","name":"mac-apple-silicon"},{"os":"macos-15-intel","name":"mac-intel"}'
           win='{"os":"windows-latest","name":"windows-x64"}'
           case "${{ inputs.platform || 'all' }}" in
             mac) list="$mac" ;;
@@ -35,9 +39,12 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
+    env:
+      # Build for the oldest macOS our dependencies allow (Big Sur, 2020) so older Macs can run it.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install build tools
@@ -54,6 +61,20 @@ jobs:
           GRIFFIES_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
         run: pyinstaller desktop/griffies.spec --noconfirm
 
+      - name: Check and record the oldest macOS this build runs on
+        if: runner.os == 'macOS'
+        run: |
+          # Read the minimum OS from every binary in the app and use the highest as the app's stated minimum.
+          min=$(find dist/Griffies.app -type f \( -perm -111 -o -name '*.so' -o -name '*.dylib' \) -print0 \
+            | xargs -0 -I{} sh -c 'otool -l "{}" 2>/dev/null | awk "/LC_BUILD_VERSION/{f=1} f&&/minos/{print \$2; f=0} /LC_VERSION_MIN_MACOSX/{g=1} g&&/version/{print \$2; g=0}"' \
+            | sort -t. -k1,1n -k2,2n | tail -1)
+          min=${min:-11.0}
+          echo "Oldest macOS supported by this build: $min"
+          /usr/libexec/PlistBuddy -c "Delete :LSMinimumSystemVersion" dist/Griffies.app/Contents/Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string $min" dist/Griffies.app/Contents/Info.plist
+          echo "### ${{ matrix.name }}: needs macOS $min or newer" >> "$GITHUB_STEP_SUMMARY"
+          # Ad-hoc sign the whole bundle so Apple Silicon will launch it after the Info.plist edit.
+          codesign --force --deep --sign - dist/Griffies.app
       - name: Package .dmg
         if: runner.os == 'macOS'
         run: |

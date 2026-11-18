@@ -54,6 +54,7 @@ if is_mac:
             "CFBundleShortVersionString": version,
             "CFBundleVersion": version,
             "NSHighResolutionCapable": True,
+            "LSMinimumSystemVersion": "11.0",
             "NSLocationWhenInUseUsageDescription": "Griffies uses your location only when you tap Use my location on the map.",
         },
     )

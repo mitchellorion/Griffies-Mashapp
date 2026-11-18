@@ -103,7 +103,8 @@ def update_check() -> dict:
         return base
     assets = rel.get("assets") or []
     want = ".exe" if _sys.platform.startswith("win") else ".dmg"
-    arch = "arm64" if "arm" in (os.uname().machine if hasattr(os, "uname") else "").lower() else "x64"
+    machine = (os.uname().machine if hasattr(os, "uname") else "").lower()
+    arch = "apple-silicon" if machine.startswith("arm") or machine == "aarch64" else ("intel" if want == ".dmg" else "x64")
     direct = next((a.get("browser_download_url") for a in assets if str(a.get("name", "")).endswith(want) and arch in str(a.get("name", ""))), None)
     direct = direct or next((a.get("browser_download_url") for a in assets if str(a.get("name", "")).endswith(want)), None)
     data = {
