@@ -4,6 +4,10 @@ env:
   # GitHub is retiring Node 20 for actions; run every action on Node 24 now.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
     inputs:
@@ -82,16 +86,32 @@ jobs:
           ln -s /Applications dmg/Applications
           cp desktop/FIRST-OPEN.txt "dmg/Read me first.txt"
           hdiutil create -volname Griffies -srcfolder dmg -ov -format UDZO "Griffies-${{ matrix.name }}.dmg"
-      - name: Rename .exe
+      - name: Package .pkg installer
+        if: runner.os == 'macOS'
+        run: |
+          VERSION=$(cat desktop/VERSION)
+          pkgbuild --component dist/Griffies.app --install-location /Applications \
+            --identifier com.ctrlaltorion.griffies --version "$VERSION" \
+            "Griffies-${{ matrix.name }}.pkg"
+      - name: Build Windows installer
         if: runner.os == 'Windows'
-        shell: bash
-        run: mv dist/Griffies.exe "Griffies-${{ matrix.name }}.exe"
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+            if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          } else { $iscc = "iscc" }
+          if (-not (Test-Path $iscc)) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          $version = (Get-Content desktop/VERSION -Raw).Trim()
+          & $iscc "/DAppVersion=$version" "/DOutName=Griffies-Setup-${{ matrix.name }}" desktop/griffies.iss
+          Move-Item "desktop/Output/Griffies-Setup-${{ matrix.name }}.exe" .
 
       - uses: actions/upload-artifact@v4
         with:
           name: Griffies-${{ matrix.name }}
           path: |
             Griffies-*.dmg
+            Griffies-*.pkg
             Griffies-*.exe
           if-no-files-found: error
 

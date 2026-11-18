@@ -59,7 +59,5 @@ if is_mac:
         },
     )
 else:
-    exe = EXE(
-        pyz, a.scripts, a.binaries, a.datas, [],
-        name="Griffies", console=False, icon=icon, upx=False,
-    )
+    exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Griffies", console=False, icon=icon, upx=False)
+    coll = COLLECT(exe, a.binaries, a.datas, name="Griffies", upx=False)

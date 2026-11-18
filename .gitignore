@@ -14,3 +14,5 @@ dist/
 desktop/bundled-config.json
 desktop/_bundled-config.json
 desktop/VERSION
+dist-release/
+*.deb

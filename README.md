@@ -12,24 +12,27 @@ Download the latest version from **[Releases](../../releases/latest)**.
 
 ### Mac (macOS 11 Big Sur or newer)
 
-| Your Mac | Download |
-|---|---|
-| Apple chip (M1, M2, M3, M4…) | `Griffies-mac-apple-silicon.dmg` |
-| Intel | `Griffies-mac-intel.dmg` |
+| Your Mac | Installer | Or drag-and-drop |
+|---|---|---|
+| Apple chip (M1, M2, M3, M4…) | `Griffies-mac-apple-silicon.pkg` | `Griffies-mac-apple-silicon.dmg` |
+| Intel | `Griffies-mac-intel.pkg` | `Griffies-mac-intel.dmg` |
 
 Not sure which you have? Apple menu → **About This Mac**. It says "Chip: Apple M…" or "Processor: Intel".
 
-1. Open the `.dmg` and drag **Griffies** into **Applications**.
-2. The first time only, **right-click** Griffies in Applications, choose **Open**, then **Open** again. The app isn't signed with a paid Apple developer certificate yet, so a normal double-click is blocked the first time.
-3. If macOS says the app "is damaged and can't be opened", run this once in Terminal, then open it again:
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/Griffies.app
-   ```
+**Installer (.pkg):** right-click the `.pkg` → **Open** → **Open**, then click through. Griffies goes into Applications.
+**Drag-and-drop (.dmg):** open it and drag **Griffies** onto **Applications**.
+
+The first time you launch it, **right-click** Griffies in Applications → **Open** → **Open**. The app isn't signed with a paid Apple developer certificate yet, so a plain double-click is blocked once. If macOS says the app "is damaged and can't be opened", run this once in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Griffies.app
+```
 
 ### Windows (10 or 11)
 
-1. Download `Griffies-windows-x64.exe` and run it.
-2. If SmartScreen says "Windows protected your PC", click **More info**, then **Run anyway**.
+1. Download `Griffies-Setup-windows-x64.exe` and run it.
+2. If SmartScreen says "Windows protected your PC", click **More info** → **Run anyway**.
+3. Click through the installer. It adds Griffies to the Start menu (and the desktop, if you tick that box) and can be removed from **Settings → Apps**. It doesn't need admin rights.
 
 ### Linux, or from source
 
