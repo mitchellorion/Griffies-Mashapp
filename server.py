@@ -120,6 +120,26 @@ def update_check() -> dict:
     return data
 
 
+def ip_location() -> dict:
+    """Approximate location from this computer's public IP, for when the OS can't give one."""
+    sources = [
+        ("https://ipinfo.io/json", lambda d: tuple(float(x) for x in str(d.get("loc") or "").split(",")[:2]), "city", "region"),
+        ("https://ipapi.co/json/", lambda d: (float(d.get("latitude")), float(d.get("longitude"))), "city", "region"),
+    ]
+    for url, coords, city_key, region_key in sources:
+        request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "griffies/1.0"})
+        try:
+            with _direct_opener.open(request, timeout=6) as response:
+                data = json.loads(response.read(20000).decode() or "{}")
+            lat, lng = coords(data)
+            if -90 <= lat <= 90 and -180 <= lng <= 180 and (lat or lng):
+                label = ", ".join(x for x in (str(data.get(city_key) or ""), str(data.get(region_key) or "")) if x)
+                return {"lat": lat, "lng": lng, "label": label, "approximate": True}
+        except Exception:
+            continue
+    raise ApiError(502, "Couldn't work out your location. Search for your city instead.")
+
+
 def app_config_public() -> dict:
     cfg = _local_config()
     key = str(os.environ.get("GRIFFIES_AWS_MAP_KEY") or cfg.get("awsMapKey") or "").strip()
@@ -3138,39 +3158,51 @@ def _put_chat_photo(url: str, data: bytes, content_type: str) -> None:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != "https" or parsed.hostname != CHAT_PHOTO_HOST:
         raise ApiError(502, "Photo upload was not accepted.")
+    status = 0
     blob = tempfile.NamedTemporaryFile(prefix="sniff-img-", delete=False)
     try:
         blob.write(data)
         blob.close()
         os.chmod(blob.name, 0o600)
-        proc = subprocess.run(
-            [
-                "curl",
-                "--http1.1",
-                "--silent",
-                "--max-time",
-                "60",
-                "--max-redirs",
-                "0",
-                "-X",
-                "PUT",
-                "-H",
-                f"Content-Type: {content_type}",
-                "-H",
-                "Expect:",
-                "--data-binary",
-                f"@{blob.name}",
-                "-o",
-                os.devnull,
-                "-w",
-                "%{http_code}",
-                "--",
-                url,
-            ],
-            capture_output=True,
-        )
-        status_text = proc.stdout.decode().strip() or "0"
-        status = int(status_text) if status_text.isdigit() else 0
+        try:
+            proc = subprocess.run(
+                [
+                    "curl",
+                    "--http1.1",
+                    "--silent",
+                    "--max-time",
+                    "60",
+                    "--max-redirs",
+                    "0",
+                    "-X",
+                    "PUT",
+                    "-H",
+                    f"Content-Type: {content_type}",
+                    "-H",
+                    "Expect:",
+                    "--data-binary",
+                    f"@{blob.name}",
+                    "-o",
+                    os.devnull,
+                    "-w",
+                    "%{http_code}",
+                    "--",
+                    url,
+                ],
+                capture_output=True,
+            )
+            status_text = proc.stdout.decode().strip() or "0"
+            status = int(status_text) if status_text.isdigit() else 0
+        except FileNotFoundError:
+            # No curl on this machine: send the same signed PUT with urllib.
+            request = urllib.request.Request(url, data=data, method="PUT", headers={"Content-Type": content_type})
+            try:
+                with _direct_opener.open(request, timeout=60) as response:
+                    status = getattr(response, "status", 200)
+            except urllib.error.HTTPError as exc:
+                status = exc.code
+            except Exception:
+                status = 0
         if status not in (200, 201, 204):
             raise ApiError(502, "Photo upload failed.")
     finally:
@@ -5352,6 +5384,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/":
                 page = (STATIC / "index.html").read_bytes()
                 self._send(200, page, "text/html; charset=utf-8")
+                return
+            if path == "/api/ip-location":
+                self._json(200, ip_location())
                 return
             if path == "/api/update":
                 self._json(200, update_check())

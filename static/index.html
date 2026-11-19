@@ -1060,6 +1060,16 @@
   }
   #mapCanvas { flex: 1; min-height: 240px; }
   #mapCanvas { background: #0b0b0b; }
+  .map-confirm { position: absolute; inset: 0; z-index: 40; display: grid; place-items: center; background: rgba(0, 0, 0, 0.6); padding: 16px; }
+  .map-confirm-box {
+    width: min(400px, 100%); display: flex; flex-direction: column; gap: 10px;
+    background: var(--card); border: 1px solid rgba(255, 210, 0, 0.45); border-radius: 16px; padding: 18px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  }
+  .map-confirm-box strong { color: var(--yellow); font-size: 17px; }
+  .map-confirm-box p { margin: 0; color: var(--text); line-height: 1.45; }
+  .map-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+  .map-confirm-actions .primary { padding: 10px 16px; }
   .map-pin { width: 34px; height: 44px; cursor: grab; filter: drop-shadow(0 4px 10px rgba(255, 210, 0, 0.35)); }
   .map-pin svg { display: block; width: 100%; height: 100%; }
   .map-pin::after {
@@ -1254,7 +1264,7 @@
       <label class="check"><input id="autoResponderSendPhotos" type="checkbox"> When someone asks for pics, include one of these</label>
       <p class="hint">In Drafts mode the photo is only suggested; you choose whether to send it. Clear refusals like "no pics" are ignored.</p>
       <div class="photo-pool" id="autoResponderPhotoPool"></div>
-      <label class="ai-file">Add photo <input id="autoResponderPhotoInput" type="file" accept="image/*"></label>
+      <label class="ai-file">Add photo <input id="autoResponderPhotoInput" type="file" accept="image/*,.heic,.heif"></label>
     </details>
 
     <div class="row ai-actions">
@@ -1369,7 +1379,7 @@
     <p class="error" id="communityError"></p>
     <p class="attached" id="communityAttached" hidden>Photo attached</p>
     <form class="composer" id="communityComposer">
-      <input id="communityPhoto" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+      <input id="communityPhoto" type="file" accept="image/*,.heic,.heif" hidden>
       <button class="photo-btn" id="communityPhotoBtn" type="button">Photo</button>
       <textarea id="communityBox" rows="1" placeholder="Community"></textarea>
       <button class="primary" id="communitySend" type="submit">Send</button>
@@ -1406,7 +1416,7 @@
     </div>
   </div>
   <form class="composer" id="composer">
-    <input id="threadPhoto" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+    <input id="threadPhoto" type="file" accept="image/*,.heic,.heif" hidden>
     <button class="photo-btn" id="threadPhotoBtn" type="button">Photo</button>
     <button class="ghost suggest-btn" id="suggestBtn" type="button" title="Suggest a reply with AI">Suggest</button>
     <textarea id="box" rows="1" placeholder="Message"></textarea>
@@ -1478,7 +1488,7 @@
     <div class="field">
       <span>Photos <span class="hint">(first is primary)</span></span>
       <div class="profile-photos-edit" id="profilePhotos"></div>
-      <input id="profilePhotoInput" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+      <input id="profilePhotoInput" type="file" accept="image/*,.heic,.heif" hidden>
       <button class="ghost" id="profileAddPhoto" type="button">Add photo</button>
     </div>
     <button class="primary" id="profileSave" type="submit">Save changes</button>
@@ -1509,11 +1519,20 @@
     <button class="ghost" id="mapHome" type="button">Account location</button>
     <button class="primary" id="mapSave" type="button">Save</button>
   </div>
-  <p class="hint">Save is the only step that moves Sniffies and Grindr. A point in the UK stays on Sniffies only.</p>
   <p class="error" id="mapError"></p>
   <p class="hint" id="mapReadout">Click the map, search, or use your location.</p>
   <div class="map-results" id="mapResults" hidden></div>
   <div id="mapCanvas"></div>
+  <div class="map-confirm" id="mapConfirm" role="alertdialog" aria-modal="true" aria-labelledby="mapConfirmTitle" hidden>
+    <div class="map-confirm-box">
+      <strong id="mapConfirmTitle">Heads up: London breaks Grindr</strong>
+      <p>Moving your location to London (or anywhere in the UK) only works on Sniffies. Grindr will stop working until you move back out of the UK.</p>
+      <div class="map-confirm-actions">
+        <button class="ghost" id="mapConfirmCancel" type="button">Cancel</button>
+        <button class="primary" id="mapConfirmOk" type="button">Save anyway</button>
+      </div>
+    </div>
+  </div>
 </section>
 <script>
 const loginView = document.getElementById("loginView");
@@ -2023,8 +2042,15 @@ async function removeProfilePhoto(mediaHash) {
 
 async function uploadProfilePhoto(file) {
   setProfileError("");
+  try {
+    file = await preparePhoto(file);
+  } catch (err) {
+    setProfileError(err.message);
+    return;
+  }
   const res = await fetch("/api/me/profile/images?takenOnGrindr=0", {
     method: "POST",
+    headers: { "Content-Type": file.type },
     body: file,
   });
   const data = await res.json().catch(() => ({}));
@@ -3633,7 +3659,46 @@ async function sendSaved(item) {
   }
 }
 
+// Re-encode every outgoing photo as a fresh JPEG before upload:
+//  - drops EXIF/XMP metadata (GPS location, phone model, timestamps)
+//  - bakes in the camera rotation so photos aren't sideways
+//  - caps the long side so uploads stay well under the 8 MB limit
+//  - turns HEIC/PNG/WebP/GIF into JPEG wherever the browser can decode them (HEIC works in the Mac app)
+const PHOTO_MAX_SIDE = 2560;
+async function preparePhoto(file) {
+  let bmp;
+  try {
+    bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch (err) {
+    const heic = /hei[cf]/i.test(file.type || "") || /\.hei[cf]$/i.test(file.name || "");
+    throw new Error(heic
+      ? "This computer can't read HEIC photos. Export it as JPEG first (or use the Mac app)."
+      : "That file isn't a photo this app can read. Use a JPEG, PNG, WebP or HEIC.");
+  }
+  const scale = Math.min(1, PHOTO_MAX_SIDE / Math.max(bmp.width, bmp.height));
+  const w = Math.max(1, Math.round(bmp.width * scale));
+  const h = Math.max(1, Math.round(bmp.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(bmp, 0, 0, w, h);
+  if (bmp.close) bmp.close();
+  let quality = 0.88;
+  let blob = await new Promise((ok) => canvas.toBlob(ok, "image/jpeg", quality));
+  while (blob && blob.size > 7.5 * 1024 * 1024 && quality > 0.5) {
+    quality -= 0.12;
+    blob = await new Promise((ok) => canvas.toBlob(ok, "image/jpeg", quality));
+  }
+  if (!blob) throw new Error("Could not prepare that photo.");
+  const base = String(file.name || "photo").replace(/\.[^.]+$/, "") || "photo";
+  return new File([blob], base + ".jpg", { type: "image/jpeg" });
+}
+
 async function postPhoto(file, params) {
+  file = await preparePhoto(file);
   const res = await fetch("/api/photo?" + params.toString(), {
     method: "POST",
     headers: { "Content-Type": file.type },
@@ -4347,7 +4412,12 @@ autoResponderPhotoInput.addEventListener("change", async () => {
   if (!file) return;
   document.getElementById("autoResponderMsg").textContent = "Uploading photo…";
   try {
-    const res = await fetch("/api/auto-responder/photos", { method: "POST", body: file });
+    const prepared = await preparePhoto(file);
+    const res = await fetch("/api/auto-responder/photos", {
+      method: "POST",
+      headers: { "Content-Type": prepared.type },
+      body: prepared,
+    });
     const data = await res.json();
     if (res.ok) {
       autoResponderPhotoInput.value = "";
@@ -4357,7 +4427,7 @@ autoResponderPhotoInput.addEventListener("change", async () => {
       document.getElementById("autoResponderMsg").textContent = data.error || "Upload failed.";
     }
   } catch (err) {
-    document.getElementById("autoResponderMsg").textContent = "Upload failed.";
+    document.getElementById("autoResponderMsg").textContent = err.message || "Upload failed.";
   }
 });
 
@@ -4638,21 +4708,61 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !mapSheet.hidden) mapSheet.hidden = true;
 });
 
-document.getElementById("mapLive").addEventListener("click", () => {
+// Device location first (precise). If the system has no location service (common on Linux)
+// or it doesn't answer, fall back to an approximate location from the internet connection.
+function deviceLocation(timeoutMs) {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error("unsupported")); return; }
+    let settled = false;
+    const timer = setTimeout(() => { if (!settled) { settled = true; reject(new Error("timeout")); } }, timeoutMs);
+    navigator.geolocation.getCurrentPosition((pos) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, precise: true });
+    }, (err) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      reject(new Error(err && err.code === 1 ? "denied" : "unavailable"));
+    }, { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 60000 });
+  });
+}
+
+document.getElementById("mapLive").addEventListener("click", async () => {
   mapError.textContent = "";
   if (!mapObj) return;
-  if (!navigator.geolocation) {
-    mapError.textContent = "This browser has no location.";
-    return;
+  const btn = document.getElementById("mapLive");
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = "Locating…";
+  let spot = null;
+  let why = "";
+  try {
+    spot = await deviceLocation(8000);
+  } catch (err) {
+    why = err.message;
+    try {
+      const res = await fetch("/api/ip-location");
+      const data = await res.json();
+      if (res.ok && typeof data.lat === "number") spot = { lat: data.lat, lng: data.lng, precise: false, label: data.label };
+      else mapError.textContent = data.error || "Couldn't find your location. Search for your city instead.";
+    } catch (e) {
+      mapError.textContent = "Couldn't find your location. Search for your city instead.";
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
   }
-  navigator.geolocation.getCurrentPosition((pos) => {
-    mapMode = "live";
-    moveMapPin(pos.coords.latitude, pos.coords.longitude, true);
-    mapGo(pos.coords.latitude, pos.coords.longitude, 14);
-  }, () => {
-    mapError.textContent = "Location permission was denied.";
-  }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+  if (!spot) return;
+  mapMode = "live";
+  moveMapPin(spot.lat, spot.lng, true);
+  mapGo(spot.lat, spot.lng, spot.precise ? 14 : 12);
+  if (!spot.precise) {
+    mapReadout.textContent = spot.lat.toFixed(4) + ", " + spot.lng.toFixed(4) +
+      " · approximate" + (spot.label ? " (" + spot.label + ")" : "") + ", not saved. Drag the pin to fine-tune.";
+    if (why === "denied") mapError.textContent = "Location access is off for this app, so this is based on your internet connection.";
+  }
 });
+
 
 document.getElementById("mapHome").addEventListener("click", () => {
   mapError.textContent = "";
@@ -4666,11 +4776,40 @@ document.getElementById("mapHome").addEventListener("click", () => {
   mapReadout.textContent = mapHome.lat.toFixed(5) + ", " + mapHome.lng.toFixed(5) + " · account location, not saved";
 });
 
+// UK bounding box (Great Britain + Northern Ireland): Grindr doesn't work with a UK location.
+function inUK(p) {
+  return !!p && p.lat >= 49.8 && p.lat <= 60.95 && p.lng >= -8.7 && p.lng <= 1.9;
+}
+function confirmUKMove() {
+  return new Promise((resolve) => {
+    const box = document.getElementById("mapConfirm");
+    const ok = document.getElementById("mapConfirmOk");
+    const cancel = document.getElementById("mapConfirmCancel");
+    const done = (val) => {
+      box.hidden = true;
+      ok.removeEventListener("click", yes);
+      cancel.removeEventListener("click", no);
+      document.removeEventListener("keydown", key, true);
+      resolve(val);
+    };
+    const yes = () => done(true);
+    const no = () => done(false);
+    const key = (e) => { if (e.key === "Escape") { e.stopPropagation(); done(false); } };
+    ok.addEventListener("click", yes);
+    cancel.addEventListener("click", no);
+    document.addEventListener("keydown", key, true);
+    box.hidden = false;
+    ok.focus();
+  });
+}
+
 document.getElementById("mapSave").addEventListener("click", async () => {
   if (mapMode !== "home" && !mapPoint) {
     mapError.textContent = "Choose a point first.";
     return;
   }
+  const target = mapMode === "home" ? mapHome : mapPoint;
+  if (inUK(target) && !(await confirmUKMove())) return;
   mapError.textContent = "";
   const saveBtn = document.getElementById("mapSave");
   saveBtn.disabled = true;
