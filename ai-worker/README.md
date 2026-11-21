@@ -44,6 +44,24 @@ echo -n 'your-random-key' | npx wrangler secret put AUTH_TOKEN
 
 The local server will send this key in the `Authorization` header.
 
+## Incoming webhook (e.g. PentestLLM)
+
+The Worker also has a webhook receiver. Set a secret for it (keep it different from `AUTH_TOKEN`):
+
+```bash
+openssl rand -hex 24 | tee /dev/stderr | npx wrangler secret put WEBHOOK_SECRET
+```
+
+Then paste this URL into the other service's webhook field:
+
+```
+https://<worker-host>/webhook?key=<WEBHOOK_SECRET>
+```
+
+If the service has a separate "secret" or "header" field, you can instead use the plain URL `https://<worker-host>/webhook` and send the secret as `Authorization: Bearer <secret>` or `X-Webhook-Secret: <secret>`.
+
+Each event is logged. Watch them live with `npx wrangler tail`, or open the Cloudflare dashboard → Workers → `sniffies-ai-responder` → Logs. Payloads are logged only and never sent to the AI model.
+
 ## Files
 
 - `wrangler.toml` — Worker name, account ID, and Workers AI binding.

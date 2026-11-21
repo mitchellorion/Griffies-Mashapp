@@ -1,7 +1,53 @@
 export interface Env {
   AI: any;
   AUTH_TOKEN: string;
+  WEBHOOK_SECRET?: string;
   MODEL?: string;
+}
+
+const MAX_WEBHOOK_BYTES = 64 * 1024;
+
+// Incoming webhook receiver, e.g. for PentestLLM.
+// URL to give the sender: https://<worker-host>/webhook?key=<WEBHOOK_SECRET>
+// The secret can also be sent as "Authorization: Bearer <secret>" or "X-Webhook-Secret: <secret>".
+// Each event is logged; view them with `npx wrangler tail` or in the Cloudflare dashboard (Workers > Logs).
+// The payload is treated as data only. It is never passed to the AI model.
+async function handleWebhook(request: Request, env: Env, url: URL): Promise<Response> {
+  const provided =
+    url.searchParams.get("key") ||
+    request.headers.get("X-Webhook-Secret") ||
+    (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!env.WEBHOOK_SECRET || provided !== env.WEBHOOK_SECRET) {
+    return error("Unauthorized.", 401);
+  }
+
+  // Some services send a GET first to check the URL works.
+  if (request.method === "GET") {
+    return json({ ok: true, message: "Webhook endpoint is live." });
+  }
+
+  const raw = await request.text();
+  if (raw.length > MAX_WEBHOOK_BYTES) {
+    return error("Payload too large.", 413);
+  }
+  let payload: unknown = raw;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    // Not JSON; keep the raw text.
+  }
+
+  console.log(
+    JSON.stringify({
+      webhook: "incoming",
+      received_at: new Date().toISOString(),
+      content_type: request.headers.get("Content-Type"),
+      user_agent: request.headers.get("User-Agent"),
+      payload,
+    }),
+  );
+
+  return json({ ok: true });
 }
 
 interface Message {
@@ -65,17 +111,21 @@ export default {
       return new Response(null, {
         headers: {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Authorization, Content-Type",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Webhook-Secret",
         },
       });
+    }
+
+    const url = new URL(request.url);
+    if (url.pathname.replace(/\/$/, "") === "/webhook") {
+      return handleWebhook(request, env, url);
     }
 
     if (request.method !== "POST") {
       return error("Only POST is supported.", 405);
     }
 
-    const url = new URL(request.url);
     if (url.pathname.replace(/\/$/, "") !== "/respond") {
       return error("Not found.", 404);
     }
